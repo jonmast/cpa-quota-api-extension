@@ -1,4 +1,4 @@
-PLUGIN_NAME ?= cpa-quota-extension
+PLUGIN_NAME ?= cpa-quota-api-extension
 DIST_DIR ?= dist
 CPA_UPSTREAM ?= upstream/CLIProxyAPI
 CPA_COMPAT_TAG ?= v7.2.61

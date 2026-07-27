@@ -9,7 +9,7 @@ All endpoints are plugin-owned Management API routes and inherit CLIProxyAPI man
 ## Quota list
 
 ```http
-GET /v0/management/plugins/cpa-quota-extension/v1/quotas?provider=codex&limit=200&cursor=...
+GET /v0/management/plugins/cpa-quota-api-extension/v1/quotas?provider=codex&limit=200&cursor=...
 Authorization: Bearer <management-key>
 ```
 
@@ -45,7 +45,7 @@ Success: `200 OK`.
 ## Account inventory
 
 ```http
-GET /v0/management/plugins/cpa-quota-extension/v1/accounts?provider=antigravity&limit=200
+GET /v0/management/plugins/cpa-quota-api-extension/v1/accounts?provider=antigravity&limit=200
 ```
 
 The response uses the redacted metadata returned by `host.auth.list`; raw credential JSON is never returned.
@@ -53,7 +53,7 @@ The response uses the redacted metadata returned by `host.auth.list`; raw creden
 ## Status
 
 ```http
-GET /v0/management/plugins/cpa-quota-extension/v1/status
+GET /v0/management/plugins/cpa-quota-api-extension/v1/status
 ```
 
 Returns cache state and effective extension configuration.

@@ -1,4 +1,4 @@
-# CPA Quota Extension
+# CPA Quota API Extension
 
 Native CLIProxyAPI dynamic-library plugin that exports a machine-readable quota snapshot for the whole credential pool.
 
@@ -32,7 +32,7 @@ This avoids a separate sidecar process and avoids hard-coding the auth directory
 
 All routes require the normal CLIProxyAPI management key.
 
-### `GET /v0/management/plugins/cpa-quota-extension/v1/quotas`
+### `GET /v0/management/plugins/cpa-quota-api-extension/v1/quotas`
 
 Returns the pool quota snapshot. Refresh is request-triggered:
 
@@ -48,11 +48,11 @@ Query parameters:
 - `limit=200`: page size, maximum 1000
 - `cursor=<opaque>`: next page cursor
 
-### `GET /v0/management/plugins/cpa-quota-extension/v1/accounts`
+### `GET /v0/management/plugins/cpa-quota-api-extension/v1/accounts`
 
 Returns redacted host credential inventory for coverage diagnostics. Supports `provider`, `limit`, and `cursor`.
 
-### `GET /v0/management/plugins/cpa-quota-extension/v1/status`
+### `GET /v0/management/plugins/cpa-quota-api-extension/v1/status`
 
 Returns plugin configuration, cache timestamp, and refresh state.
 
@@ -63,7 +63,7 @@ plugins:
   enabled: true
   dir: plugins
   configs:
-    cpa-quota-extension:
+    cpa-quota-api-extension:
       enabled: true
       priority: 100
       cache-ttl: 30m
@@ -76,7 +76,7 @@ plugins:
 
 ```bash
 git clone --recurse-submodules <this-repository-url>
-cd cpa-quota-extension
+cd cpa-quota-api-extension
 ```
 
 For an existing clone:
@@ -96,7 +96,7 @@ make build
 The Linux artifact is written to:
 
 ```text
-dist/cpa-quota-extension.so
+dist/cpa-quota-api-extension.so
 ```
 
 Copy it to the configured CLIProxyAPI plugin directory and restart CLIProxyAPI.

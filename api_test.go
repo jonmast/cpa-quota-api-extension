@@ -35,7 +35,7 @@ func TestQuotaEndpointPaginates(t *testing.T) {
 
 func TestUnknownRouteReturns404(t *testing.T) {
 	runtime := newRuntime(&fakeHost{})
-	resp := runtime.handleManagement(managementRequest{Method: http.MethodGet, Path: "/plugins/cpa-quota-extension/nope"})
+	resp := runtime.handleManagement(managementRequest{Method: http.MethodGet, Path: "/plugins/cpa-quota-api-extension/nope"})
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("status=%d", resp.StatusCode)
 	}

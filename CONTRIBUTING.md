@@ -34,7 +34,7 @@ make verify-upstream
 make build
 ```
 
-For ABI behavior, smoke-load `dist/cpa-quota-extension.so` with the pinned upstream CLIProxyAPI binary or a production-matching binary before release.
+For ABI behavior, smoke-load `dist/cpa-quota-api-extension.so` with the pinned upstream CLIProxyAPI binary or a production-matching binary before release.
 
 ## Updating the submodule
 

@@ -8,12 +8,12 @@ import (
 )
 
 const (
-	pluginID      = "cpa-quota-extension"
+	pluginID      = "cpa-quota-api-extension"
 	pluginVersion = "0.1.0-dev"
 
-	quotaRoute   = "/plugins/cpa-quota-extension/v1/quotas"
-	accountRoute = "/plugins/cpa-quota-extension/v1/accounts"
-	statusRoute  = "/plugins/cpa-quota-extension/v1/status"
+	quotaRoute   = "/plugins/cpa-quota-api-extension/v1/quotas"
+	accountRoute = "/plugins/cpa-quota-api-extension/v1/accounts"
+	statusRoute  = "/plugins/cpa-quota-api-extension/v1/status"
 )
 
 type pluginConfig struct {

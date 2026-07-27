@@ -8,10 +8,10 @@ func pluginRegistration() registration {
 	return registration{
 		SchemaVersion: schemaVersion,
 		Metadata: metadata{
-			Name:             "CPA Quota Extension",
+			Name:             "CPA Quota API Extension",
 			Version:          pluginVersion,
 			Author:           "dinhkarate",
-			GitHubRepository: "https://github.com/dinhkarate/cpa-quota-extension",
+			GitHubRepository: "https://github.com/dinhkarate/cpa-quota-api-extension",
 			ConfigFields: []configField{
 				{Name: "cache-ttl", Type: "string", Description: "Request-triggered quota cache duration. Default: 30m."},
 				{Name: "request-timeout", Type: "string", Description: "Per-account upstream request timeout. Default: 30s."},
