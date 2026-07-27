@@ -40,6 +40,16 @@ func TestAccountIDFromJWT(t *testing.T) {
 	}
 }
 
+func TestHostHTTPResponseMatchesPluginAPIWireShape(t *testing.T) {
+	var response hostHTTPResponse
+	if err := json.Unmarshal([]byte(`{"StatusCode":200,"Headers":{"Content-Type":["application/json"]},"Body":"e30="}`), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != 200 || string(response.Body) != "{}" {
+		t.Fatalf("response = %#v", response)
+	}
+}
+
 func TestConcurrentSnapshotRefreshIsDeduplicated(t *testing.T) {
 	host := &fakeHost{entries: []hostAuthFileEntry{{AuthIndex: "a", Name: "unknown.json", Provider: "unknown"}}}
 	runtime := newRuntime(host)

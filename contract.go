@@ -62,9 +62,9 @@ type hostHTTPRequest struct {
 }
 
 type hostHTTPResponse struct {
-	StatusCode int                 `json:"status_code"`
-	Headers    map[string][]string `json:"headers,omitempty"`
-	Body       []byte              `json:"body,omitempty"`
+	StatusCode int                 `json:"StatusCode"`
+	Headers    map[string][]string `json:"Headers,omitempty"`
+	Body       []byte              `json:"Body,omitempty"`
 }
 
 type hostLogRequest struct {
