@@ -9,7 +9,7 @@ import (
 
 const (
 	pluginID      = "cpa-quota-api-extension"
-	pluginVersion = "0.1.0-dev"
+	pluginVersion = "0.1.0"
 
 	quotaRoute   = "/plugins/cpa-quota-api-extension/v1/quotas"
 	accountRoute = "/plugins/cpa-quota-api-extension/v1/accounts"

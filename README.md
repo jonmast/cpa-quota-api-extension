@@ -340,8 +340,8 @@ The official [CLIProxyAPI Plugins Store](https://github.com/router-for-me/CLIPro
 
 Publication flow:
 
-1. Replace the development metadata version (`0.1.0-dev`) with the exact release version (`0.1.0`), rebuild, and verify that the status endpoint reports the same version as the intended tag.
-2. Create the stable GitHub release tag `v0.1.0` in this repository.
+1. Set the plugin metadata to the exact intended release version, rebuild, and verify that the status endpoint reports the same version as the tag.
+2. Create a stable GitHub release tag in `v<version>` form, such as `v0.1.0`.
 3. Attach a platform zip named:
 
    ```text
