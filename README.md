@@ -59,6 +59,33 @@ Every eligible physical runtime credential appears in the exported inventory. Ru
 
 Official CLIProxyAPI `_no-plugin` builds use `CGO_ENABLED=0` and cannot load native dynamic-library plugins. The current build and production verification target is Linux AMD64; other platforms require a native build and platform-specific testing.
 
+## Let an AI agent install it for you
+
+If you do not want to perform the installation manually, give this repository to a coding or operations AI agent that has access to your CLIProxyAPI host:
+
+```text
+Install CPA Quota API Extension from:
+https://github.com/dinhkarate/cpa-quota-api-extension
+
+Before changing anything, inspect my CLIProxyAPI version, build variant, operating
+system, architecture, service manager, plugin directory, and current configuration.
+Confirm that the CLIProxyAPI build supports native plugins. Back up the existing
+configuration, then install the plugin, enable and configure it, and restart
+CLIProxyAPI with minimal downtime.
+
+Do not print or expose my management key, OAuth credentials, access tokens, refresh
+tokens, ID tokens, cookies, or auth files. Do not disable or remove existing plugins
+or legacy services unless I explicitly ask you to.
+
+After installation, verify the plugin is registered and call the authenticated
+/status, /accounts, and /quotas endpoints. Confirm cache behavior, check service logs
+for load errors or crashes, and roll back if CLIProxyAPI becomes unhealthy. Report
+the installed artifact path and SHA-256, configuration changes, backup path, endpoint
+status codes, and sanitized quota totals only.
+```
+
+Review the AI agent's plan before allowing production changes, and give it credentials through a secure secret mechanism rather than pasting them into source files or public logs.
+
 ## Installation
 
 ### Build from source
