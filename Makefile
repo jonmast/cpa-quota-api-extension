@@ -25,6 +25,8 @@ verify-upstream:
 	grep -q 'MethodUsageHandle' $(CPA_UPSTREAM)/sdk/pluginabi/types.go
 	grep -q 'MethodHostHTTPDo' $(CPA_UPSTREAM)/sdk/pluginabi/types.go
 	grep -q 'MethodManagementRegister' $(CPA_UPSTREAM)/sdk/pluginabi/types.go
+	grep -q 'Resources \[\]ResourceRoute' $(CPA_UPSTREAM)/sdk/pluginapi/types.go
+	grep -q 'ResourceBasePath string' $(CPA_UPSTREAM)/sdk/pluginapi/types.go
 
 clean:
 	rm -rf $(DIST_DIR)

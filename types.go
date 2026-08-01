@@ -9,14 +9,15 @@ import (
 
 const (
 	pluginID      = "cpa-quota-api-extension"
-	pluginVersion = "0.2.0"
+	pluginVersion = "0.3.0"
 
-	quotaRoute     = "/plugins/cpa-quota-api-extension/v1/quotas"
-	accountRoute   = "/plugins/cpa-quota-api-extension/v1/accounts"
-	statusRoute    = "/plugins/cpa-quota-api-extension/v1/status"
-	healthRoute    = "/plugins/cpa-quota-api-extension/v1/health"
-	incidentsRoute = "/plugins/cpa-quota-api-extension/v1/incidents"
-	historyRoute   = "/plugins/cpa-quota-api-extension/v1/history"
+	panelResourcePath = "/panel"
+	quotaRoute        = "/plugins/cpa-quota-api-extension/v1/quotas"
+	accountRoute      = "/plugins/cpa-quota-api-extension/v1/accounts"
+	statusRoute       = "/plugins/cpa-quota-api-extension/v1/status"
+	healthRoute       = "/plugins/cpa-quota-api-extension/v1/health"
+	incidentsRoute    = "/plugins/cpa-quota-api-extension/v1/incidents"
+	historyRoute      = "/plugins/cpa-quota-api-extension/v1/history"
 )
 
 type pluginConfig struct {
@@ -81,7 +82,14 @@ type configField struct {
 }
 
 type managementRegistrationResponse struct {
-	Routes []managementRoute `json:"routes,omitempty"`
+	Routes    []managementRoute `json:"routes,omitempty"`
+	Resources []resourceRoute   `json:"resources,omitempty"`
+}
+
+type resourceRoute struct {
+	Path        string `json:"Path"`
+	Menu        string `json:"Menu"`
+	Description string `json:"Description,omitempty"`
 }
 
 type managementRoute struct {

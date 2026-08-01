@@ -2,9 +2,21 @@
 
 Versioning stance: additive changes within `/v1`; breaking changes use `/v2`.
 
+## CPAMGMT Resource Panel
+
+The plugin registers one browser resource so CPAMGMT can add **CPA Quota** to its sidebar:
+
+```http
+GET /v0/resource/plugins/cpa-quota-api-extension/panel
+```
+
+The resource response is a static self-contained HTML document with no credentials or operational data. Resource routes are not Management API-authenticated; all configuration and data operations initiated by the page use authenticated same-origin Management API requests. The panel reads configuration with `GET /v0/management/plugins/cpa-quota-api-extension/config` and saves only changed allowlisted keys with `PATCH` to that host endpoint.
+
+The panel exposes no arbitrary request method, URL, headers, or body. Its API Explorer is limited to the six read-only plugin routes documented below. Same-origin CPAMGMT with a remembered management key is required for interactive use.
+
 ## Authentication
 
-All endpoints are plugin-owned Management API routes and inherit CLIProxyAPI management authentication and remote-management policy.
+All data endpoints are plugin-owned Management API routes and inherit CLIProxyAPI management authentication and remote-management policy.
 
 ## Quota list
 

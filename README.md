@@ -56,7 +56,7 @@ Every eligible physical runtime credential appears in the exported inventory. Ru
 
 ## Requirements
 
-- CLIProxyAPI `v7.2.61` baseline. The current release is also integration-tested against official CLIProxyAPI `v7.2.113`.
+- CLIProxyAPI `v7.2.61` baseline or a later plugin-capable release with Management Resources support. Release verification also tests the latest official CLIProxyAPI.
 - A plugin-capable CLIProxyAPI build with CGO support.
 - `plugins.enabled: true` in CLIProxyAPI configuration.
 - A configured CLIProxyAPI management key.
@@ -162,6 +162,24 @@ plugins:
 ```
 
 The SQLite database contains operational metadata such as `auth_index`, provider, timestamps, and HTTP failure classes. Store it on a private writable path and restrict access to the CLIProxyAPI service user. For containers or ephemeral hosts, mount this path on durable storage. Back up the database consistently before upgrades because the plugin may migrate its schema on startup; with WAL enabled, stop CLIProxyAPI or use SQLite's backup mechanism rather than copying only the main `.db` file. The plugin never changes, disables, or re-enables credentials.
+
+## CPAMGMT panel
+
+When the plugin is enabled, CPAMGMT adds **CPA Quota** to its sidebar. The native panel is served by the plugin at:
+
+```text
+/v0/resource/plugins/cpa-quota-api-extension/panel
+```
+
+It includes:
+
+- **Configuration** — reads and shallow-patches only known plugin fields through CLIProxyAPI's authenticated Management API;
+- **API Explorer** — constrained, read-only access to the six plugin endpoints with endpoint-specific filters;
+- **Documentation** — embedded route, health-state, configuration, and security reference.
+
+The resource document contains no management credential or operational data. When CPAMGMT and CLIProxyAPI share the same origin, it reuses CPAMGMT's remembered management session for authenticated requests. If the key is not remembered or CPAMGMT is hosted on another origin, the panel shows a session-unavailable message instead of asking for or storing another key.
+
+The panel loads no CDN scripts, fonts, analytics, or third-party assets. Installing and enabling any plugin with a browser resource should still be treated as trusting that plugin's same-origin browser code.
 
 ## External monitoring API
 

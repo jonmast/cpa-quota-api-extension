@@ -112,6 +112,9 @@ func (r *runtimeState) shutdown() {
 }
 
 func (r *runtimeState) handleManagement(req managementRequest) managementResponse {
+	if req.Method == http.MethodGet && req.Path == "/v0/resource/plugins/"+pluginID+panelResourcePath {
+		return panelResponse()
+	}
 	path := strings.TrimPrefix(req.Path, "/v0/management")
 	switch {
 	case req.Method == http.MethodGet && path == quotaRoute:
