@@ -58,6 +58,52 @@ GET /v0/management/plugins/cpa-quota-api-extension/v1/status
 
 Returns cache state and effective extension configuration.
 
+## Account-level pool health
+
+```http
+GET /v0/management/plugins/cpa-quota-api-extension/v1/health?provider=codex&state=rate_limited&limit=200&cursor=...
+```
+
+Success: `200 OK`. The response contains filtered `capacity`, `by_state`, `by_provider`, and paginated account health records.
+
+Exclusive states, in precedence order:
+
+1. `disabled`
+2. `unauthorized`
+3. `forbidden`
+4. `rate_limited`
+5. `unavailable`
+6. `degraded`
+7. `healthy`
+8. `unknown`
+
+Capacity invariants:
+
+```text
+total = routable + lost
+degraded <= routable
+```
+
+`refresh=true` forces a current host inventory reconciliation. Health monitoring is read-only and never changes credential state.
+
+## Incidents
+
+```http
+GET /v0/management/plugins/cpa-quota-api-extension/v1/incidents?provider=codex&status_code=429&from=2026-08-01T00:00:00Z&limit=100
+```
+
+Supported filters: `auth_index`, `provider`, `state`, `status_code`, `from`, `to`, `limit`, and opaque `cursor`. Time filters use RFC3339. Limits default to 200 and are capped at 500.
+
+Incident rows contain sanitized account index, provider, failure class, HTTP status, opened time, and optional resolution time. Failure bodies, API keys, tokens, and raw headers are not stored.
+
+## Capacity history
+
+```http
+GET /v0/management/plugins/cpa-quota-api-extension/v1/history?from=2026-08-01T00:00:00Z&limit=100
+```
+
+Returns SQLite-backed total/routable/lost/degraded capacity points plus `by_state` and `by_provider` aggregates. Supports `from`, `to`, `limit`, and opaque `cursor`.
+
 ## Error shape
 
 HTTP status codes are honest. Example:
@@ -73,9 +119,10 @@ HTTP status codes are honest. Example:
 
 Possible route-level statuses:
 
-- `400`: invalid query in a future strict-validation revision
+- `400`: invalid limit, cursor, RFC3339 time range, or incident status-code filter
 - `401`: missing/invalid management key, handled by CLIProxyAPI
 - `404`: route not found
-- `502`: host callback or pool refresh failure
+- `502`: host callback or quota pool refresh failure
+- `503`: health storage or reconciliation is unavailable; legacy quota routes remain available
 
 Provider failures are account-level objects so one bad credential does not fail the entire pool snapshot.

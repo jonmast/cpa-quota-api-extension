@@ -138,6 +138,8 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 		return okEnvelope(pluginRegistration())
 	case methodManagementRegister:
 		return okEnvelope(managementRegistration())
+	case methodUsageHandle:
+		return activeRuntime.handleUsage(request), nil
 	case methodManagementHandle:
 		var req managementRequest
 		if err := json.Unmarshal(request, &req); err != nil {

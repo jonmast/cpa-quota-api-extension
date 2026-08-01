@@ -17,9 +17,24 @@ func pluginRegistration() registration {
 				{Name: "request-timeout", Type: "string", Description: "Per-account upstream request timeout. Default: 30s."},
 				{Name: "max-concurrency", Type: "number", Description: "Maximum concurrent account quota queries. Default: 8."},
 				{Name: "include-disabled", Type: "boolean", Description: "Include disabled credentials in quota scans. Default: false."},
+				{Name: "database-path", Type: "string", Description: "SQLite health database path. Default: ./data/cpa-quota-api-extension.db."},
+				{Name: "health-refresh-interval", Type: "string", Description: "Health refresh interval (minimum 10s)."},
+				{Name: "health-history-interval", Type: "string", Description: "Health history interval (minimum 10s)."},
+				{Name: "failure-window", Type: "string", Description: "Recent failure counting window."},
+				{Name: "degraded-failure-threshold", Type: "number", Description: "Failures in window before degraded; zero disables."},
+				{Name: "incident-retention", Type: "string", Description: "Incident retention (minimum 1h)."},
+				{Name: "incident-max-rows", Type: "number", Description: "Maximum incident rows (100 through 1000000)."},
+				{Name: "history-retention", Type: "string", Description: "History retention (minimum 1h)."},
+				{Name: "history-max-rows", Type: "number", Description: "Maximum history rows (100 through 1000000)."},
+				{Name: "usage-queue-size", Type: "number", Description: "Usage event queue size (64 through 65536)."},
+				{Name: "webhook-url", Type: "string", Description: "Optional HTTP(S) pool-health alert webhook URL."},
+				{Name: "webhook-timeout", Type: "string", Description: "Webhook delivery timeout."},
+				{Name: "alert-lost-threshold", Type: "number", Description: "Lost accounts before alert; zero disables."},
+				{Name: "alert-degraded-threshold", Type: "number", Description: "Degraded accounts before alert; zero disables."},
+				{Name: "alert-cooldown", Type: "string", Description: "Breach delivery cooldown."},
 			},
 		},
-		Capabilities: registrationCapabilities{ManagementAPI: true},
+		Capabilities: registrationCapabilities{ManagementAPI: true, UsagePlugin: true},
 	}
 }
 
@@ -28,5 +43,8 @@ func managementRegistration() managementRegistrationResponse {
 		{Method: http.MethodGet, Path: quotaRoute, Description: "Returns a cached, request-triggered quota snapshot for the credential pool."},
 		{Method: http.MethodGet, Path: accountRoute, Description: "Returns redacted runtime credential inventory for quota coverage diagnostics."},
 		{Method: http.MethodGet, Path: statusRoute, Description: "Returns extension configuration and cache state."},
+		{Method: http.MethodGet, Path: healthRoute, Description: "Returns account-level pool health and capacity."},
+		{Method: http.MethodGet, Path: incidentsRoute, Description: "Returns sanitized health incidents."},
+		{Method: http.MethodGet, Path: historyRoute, Description: "Returns pool health capacity history."},
 	}}
 }

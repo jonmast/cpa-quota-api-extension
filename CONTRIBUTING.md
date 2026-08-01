@@ -30,11 +30,13 @@ Relevant upstream references:
 ```bash
 make fmt
 make test
+go test -race ./...
+go vet ./...
 make verify-upstream
 make build
 ```
 
-For ABI behavior, smoke-load `dist/cpa-quota-api-extension.so` with the pinned upstream CLIProxyAPI binary or a production-matching binary before release.
+For ABI behavior, smoke-load `dist/cpa-quota-api-extension.so` with the pinned upstream CLIProxyAPI binary and the latest supported official release before publishing. Verify all quota and health routes, `usage_plugin` registration, SQLite integrity and permissions, shutdown/reconfigure behavior, and that responses, database rows, and webhooks contain no credential secrets.
 
 ## Updating the submodule
 

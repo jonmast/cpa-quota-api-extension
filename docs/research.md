@@ -27,7 +27,7 @@ There is no dedicated quota callback or standardized numeric quota schema. The p
 
 Native plugins also require a plugin-capable CPA build with CGO enabled. Official `_no-plugin` release artifacts are built with `CGO_ENABLED=0` and cannot load dynamic libraries. Browser resources registered by plugins are served under `/v0/resource/plugins/<pluginID>/...`; authenticated plugin API routes remain under `/v0/management/...`, which is why this project exposes only management routes.
 
-Conclusion: a native pool quota exporter is feasible without modifying CLIProxyAPI core, provided CPA is a plugin-capable build and `plugins.enabled` is true.
+Conclusion: a native pool quota exporter and account-level health observer are feasible without modifying CLIProxyAPI core, provided CPA is a plugin-capable build and `plugins.enabled` is true. CLIProxyAPI `v7.2.113` retains native ABI version 1 and accepts this schema-version-1 plugin despite the host JSON schema advancing to version 2. The `usage.handle`, Management API, and auth runtime callbacks used by v0.2.0 remain compatible. The host does not expose complete per-model cooldown state through this callback surface, so health capacity is intentionally account-level.
 
 ## Existing projects
 

@@ -1,4 +1,7 @@
 dist/
+data/*.db
+data/*.db-wal
+data/*.db-shm
 *.so
 *.dylib
 *.dll

@@ -9,18 +9,36 @@ import (
 
 const (
 	pluginID      = "cpa-quota-api-extension"
-	pluginVersion = "0.1.0"
+	pluginVersion = "0.2.0"
 
-	quotaRoute   = "/plugins/cpa-quota-api-extension/v1/quotas"
-	accountRoute = "/plugins/cpa-quota-api-extension/v1/accounts"
-	statusRoute  = "/plugins/cpa-quota-api-extension/v1/status"
+	quotaRoute     = "/plugins/cpa-quota-api-extension/v1/quotas"
+	accountRoute   = "/plugins/cpa-quota-api-extension/v1/accounts"
+	statusRoute    = "/plugins/cpa-quota-api-extension/v1/status"
+	healthRoute    = "/plugins/cpa-quota-api-extension/v1/health"
+	incidentsRoute = "/plugins/cpa-quota-api-extension/v1/incidents"
+	historyRoute   = "/plugins/cpa-quota-api-extension/v1/history"
 )
 
 type pluginConfig struct {
-	CacheTTL        time.Duration
-	RequestTimeout  time.Duration
-	MaxConcurrency  int
-	IncludeDisabled bool
+	CacheTTL              time.Duration
+	RequestTimeout        time.Duration
+	MaxConcurrency        int
+	IncludeDisabled       bool
+	DatabasePath          string
+	HealthRefreshInterval time.Duration
+	HistoryInterval       time.Duration
+	FailureWindow         time.Duration
+	DegradedThreshold     int
+	IncidentRetention     time.Duration
+	IncidentMaxRows       int
+	HistoryRetention      time.Duration
+	HistoryMaxRows        int
+	HealthQueue           int
+	WebhookURL            string
+	WebhookTimeout        time.Duration
+	LostThreshold         int
+	DegradedPoolThreshold int
+	AlertCooldown         time.Duration
 }
 
 type envelope struct {
@@ -38,6 +56,7 @@ type envelopeError struct {
 
 type registrationCapabilities struct {
 	ManagementAPI bool `json:"management_api"`
+	UsagePlugin   bool `json:"usage_plugin"`
 }
 
 type registration struct {
@@ -144,13 +163,19 @@ type quotaResponse struct {
 }
 
 type statusResponse struct {
-	PluginID        string    `json:"plugin_id"`
-	Version         string    `json:"version"`
-	CacheTTL        string    `json:"cache_ttl"`
-	RequestTimeout  string    `json:"request_timeout"`
-	MaxConcurrency  int       `json:"max_concurrency"`
-	IncludeDisabled bool      `json:"include_disabled"`
-	HasSnapshot     bool      `json:"has_snapshot"`
-	GeneratedAt     time.Time `json:"generated_at,omitempty"`
-	Refreshing      bool      `json:"refreshing"`
+	PluginID          string    `json:"plugin_id"`
+	Version           string    `json:"version"`
+	CacheTTL          string    `json:"cache_ttl"`
+	RequestTimeout    string    `json:"request_timeout"`
+	MaxConcurrency    int       `json:"max_concurrency"`
+	IncludeDisabled   bool      `json:"include_disabled"`
+	HasSnapshot       bool      `json:"has_snapshot"`
+	GeneratedAt       time.Time `json:"generated_at,omitempty"`
+	Refreshing        bool      `json:"refreshing"`
+	HealthEnabled     bool      `json:"health_enabled"`
+	HealthSnapshotAt  time.Time `json:"health_snapshot_at,omitempty"`
+	DroppedUsageCount uint64    `json:"dropped_usage_count"`
+	DatabaseError     string    `json:"database_error,omitempty"`
+	WebhookConfigured bool      `json:"webhook_configured"`
+	WebhookError      string    `json:"webhook_error,omitempty"`
 }

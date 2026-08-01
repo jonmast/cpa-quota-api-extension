@@ -21,6 +21,8 @@ verify-upstream:
 	test "$$(git -C $(CPA_UPSTREAM) rev-parse HEAD)" = "$$(git -C $(CPA_UPSTREAM) rev-list -n 1 $(CPA_COMPAT_TAG))"
 	grep -q 'MethodHostAuthList' $(CPA_UPSTREAM)/sdk/pluginabi/types.go
 	grep -q 'MethodHostAuthGet' $(CPA_UPSTREAM)/sdk/pluginabi/types.go
+	grep -q 'MethodHostAuthGetRuntime' $(CPA_UPSTREAM)/sdk/pluginabi/types.go
+	grep -q 'MethodUsageHandle' $(CPA_UPSTREAM)/sdk/pluginabi/types.go
 	grep -q 'MethodHostHTTPDo' $(CPA_UPSTREAM)/sdk/pluginabi/types.go
 	grep -q 'MethodManagementRegister' $(CPA_UPSTREAM)/sdk/pluginabi/types.go
 

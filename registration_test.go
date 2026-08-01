@@ -18,7 +18,7 @@ func TestRegistrationWire(t *testing.T) {
 	if err := json.Unmarshal(env.Result, &reg); err != nil {
 		t.Fatal(err)
 	}
-	if len(reg.Routes) != 3 {
+	if len(reg.Routes) != 6 {
 		t.Fatalf("wire=%s result=%s routes=%#v", raw, env.Result, reg.Routes)
 	}
 }

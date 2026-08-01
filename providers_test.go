@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"sync"
 	"testing"
 	"time"
 )
@@ -69,22 +70,32 @@ func TestConcurrentSnapshotRefreshIsDeduplicated(t *testing.T) {
 	for i := 0; i < 8; i++ {
 		<-results
 	}
-	if host.listCalls != 1 {
-		t.Fatalf("host list calls = %d, want 1", host.listCalls)
+	host.mu.Lock()
+	calls := host.listCalls
+	host.mu.Unlock()
+	if calls != 1 {
+		t.Fatalf("host list calls = %d, want 1", calls)
 	}
 }
 
 type fakeHost struct {
+	mu        sync.Mutex
 	entries   []hostAuthFileEntry
 	listCalls int
 }
 
 func (f *fakeHost) listAuth(context.Context) ([]hostAuthFileEntry, error) {
+	f.mu.Lock()
 	f.listCalls++
+	entries := append([]hostAuthFileEntry(nil), f.entries...)
+	f.mu.Unlock()
 	time.Sleep(20 * time.Millisecond)
-	return f.entries, nil
+	return entries, nil
 }
 func (f *fakeHost) getAuth(context.Context, string) (json.RawMessage, error) { return nil, nil }
+func (f *fakeHost) getAuthRuntime(context.Context, string) (hostAuthFileEntry, error) {
+	return hostAuthFileEntry{}, nil
+}
 func (f *fakeHost) doHTTP(context.Context, hostHTTPRequest) (hostHTTPResponse, error) {
 	return hostHTTPResponse{}, nil
 }

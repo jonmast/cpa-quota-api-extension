@@ -34,6 +34,11 @@ CLIProxyAPI :8317
 - Refreshes quota only when requested; no cron job or background polling.
 - Caches snapshots for 30 minutes by default.
 - Deduplicates concurrent refreshes so multiple dashboards share one upstream scan.
+- Tracks account-level pool health from CLIProxyAPI runtime state and completed request outcomes.
+- Classifies accounts as `healthy`, `degraded`, `disabled`, `unauthorized`, `forbidden`, `rate_limited`, `unavailable`, or `unknown`.
+- Exports total, routable, lost, and degraded pool capacity for monitoring and alerting.
+- Persists sanitized incidents and capacity history in a bounded SQLite database.
+- Sends optional pool-level breach, reminder, and recovery webhooks without account identity or credentials.
 - Isolates provider failures per account instead of failing the whole response.
 - Supports provider/status filtering and cursor pagination.
 - Never returns access tokens, refresh tokens, ID tokens, cookies, or raw upstream response bodies.
@@ -51,7 +56,7 @@ Every eligible physical runtime credential appears in the exported inventory. Ru
 
 ## Requirements
 
-- CLIProxyAPI `v7.2.61` or a compatible later release.
+- CLIProxyAPI `v7.2.61` baseline. The current release is also integration-tested against official CLIProxyAPI `v7.2.113`.
 - A plugin-capable CLIProxyAPI build with CGO support.
 - `plugins.enabled: true` in CLIProxyAPI configuration.
 - A configured CLIProxyAPI management key.
@@ -137,7 +142,26 @@ plugins:
       request-timeout: 30s
       max-concurrency: 8
       include-disabled: false
+
+      database-path: /var/lib/cliproxyapi/cpa-quota-api-extension.db
+      health-refresh-interval: 1m
+      health-history-interval: 5m
+      failure-window: 10m
+      degraded-failure-threshold: 3
+      incident-retention: 168h
+      incident-max-rows: 10000
+      history-retention: 720h
+      history-max-rows: 10000
+      usage-queue-size: 1024
+
+      webhook-url: ""
+      webhook-timeout: 10s
+      alert-lost-threshold: 1
+      alert-degraded-threshold: 1
+      alert-cooldown: 15m
 ```
+
+The SQLite database contains operational metadata such as `auth_index`, provider, timestamps, and HTTP failure classes. Store it on a private writable path and restrict access to the CLIProxyAPI service user. For containers or ephemeral hosts, mount this path on durable storage. Back up the database consistently before upgrades because the plugin may migrate its schema on startup; with WAL enabled, stop CLIProxyAPI or use SQLite's backup mechanism rather than copying only the main `.db` file. The plugin never changes, disables, or re-enables credentials.
 
 ## External monitoring API
 
@@ -242,7 +266,93 @@ Returns redacted runtime credential metadata for coverage diagnostics. Raw crede
 GET /v0/management/plugins/cpa-quota-api-extension/v1/status
 ```
 
-Returns effective cache settings and current refresh state.
+Returns effective cache settings, quota refresh state, health storage state, optional latest health snapshot time, dropped usage-event count, and webhook delivery status. `health_snapshot_at` is absent until the first successful reconciliation. The webhook URL itself is never returned.
+
+### Account-level pool health
+
+```http
+GET /v0/management/plugins/cpa-quota-api-extension/v1/health
+```
+
+Returns the current account-level pool capacity:
+
+```json
+{
+  "capacity": {
+    "total": 500,
+    "routable": 400,
+    "lost": 100,
+    "degraded": 20
+  },
+  "by_state": {
+    "healthy": 380,
+    "degraded": 20,
+    "rate_limited": 60,
+    "unauthorized": 25,
+    "disabled": 15
+  },
+  "by_provider": {
+    "codex": 300,
+    "antigravity": 200
+  },
+  "accounts": [],
+  "page": {
+    "count": 0,
+    "total": 500
+  }
+}
+```
+
+`routable` contains `healthy` plus `degraded` accounts. `lost` contains accounts currently classified as disabled, unauthorized, forbidden, rate-limited, unavailable, or unknown. Account-level capacity is based on the runtime state exposed by CLIProxyAPI; CLIProxyAPI v7 does not expose every per-model cooldown through the plugin ABI.
+
+Filters:
+
+```text
+provider=codex
+state=rate_limited
+limit=200
+cursor=<opaque>
+refresh=true
+```
+
+### Request incidents
+
+```http
+GET /v0/management/plugins/cpa-quota-api-extension/v1/incidents
+```
+
+Persists sanitized failed request outcomes received from native `usage.handle`, including transport failures and HTTP `401`, `403`, `429`, `4xx`, and `5xx` classes. It never stores the client API key, failure body, tokens, or raw response headers.
+
+Filters:
+
+```text
+auth_index=<runtime-auth-index>
+provider=codex
+state=rate_limited
+status_code=429
+from=2026-08-01T00:00:00Z
+to=2026-08-02T00:00:00Z
+limit=200
+cursor=<opaque>
+```
+
+### Capacity history
+
+```http
+GET /v0/management/plugins/cpa-quota-api-extension/v1/history
+```
+
+Returns bounded SQLite-backed history points with total/routable/lost/degraded capacity plus provider and state aggregates. Supports `from`, `to`, `limit`, and `cursor`.
+
+### Pool alerts
+
+Set `webhook-url` to enable pool-level notifications. Prefer an HTTPS endpoint under your control; plain HTTP and redirected destinations can disclose operational capacity data in transit. The plugin sends:
+
+- `breach` when lost or degraded capacity reaches its configured threshold;
+- periodic breach reminders after `alert-cooldown`;
+- `recovery` immediately when the pool returns below thresholds.
+
+A threshold of `0` disables that alert rule. Webhook payloads contain only aggregate capacity and state counts—never account names, emails, auth indices, credentials, or provider error bodies.
 
 ## Homepage / gethomepage example
 
@@ -375,7 +485,9 @@ Publication flow:
    }
    ```
 
-The pull request should link the release and show that the platform zip and `checksums.txt` exist. After the first registry entry is accepted, publishing a newer valid GitHub release is enough for CLIProxyAPI to discover plugin updates; the registry does not need a version edit for every release.
+The pull request should link the release and show that the platform zip and `checksums.txt` exist. After the first registry entry is accepted, publishing a newer valid GitHub release makes the update discoverable; the registry does not need a version edit for every release.
+
+Installed hosts are not upgraded automatically. An operator must use **Management Center → Plugin Store → Update** (or the authenticated Plugin Store install endpoint), then verify the installed/runtime version and the plugin status, quota, and health routes. Container and fleet deployments must persist or distribute the plugin directory themselves.
 
 Official registry requirements: <https://github.com/router-for-me/CLIProxyAPI-Plugins-Store#release-requirements>
 

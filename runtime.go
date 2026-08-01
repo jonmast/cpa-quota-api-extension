@@ -9,18 +9,36 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 type runtimeState struct {
-	mu          sync.Mutex
-	cond        *sync.Cond
-	host        hostClient
-	cfg         pluginConfig
-	snapshot    quotaResponse
-	hasSnapshot bool
-	refreshing  bool
-	closed      bool
+	mu               sync.Mutex
+	cond             *sync.Cond
+	host             hostClient
+	cfg              pluginConfig
+	snapshot         quotaResponse
+	hasSnapshot      bool
+	refreshing       bool
+	closed           bool
+	healthStore      *healthStore
+	healthStop       chan struct{}
+	healthDone       chan struct{}
+	healthQueue      chan healthEvent
+	webhookStop      chan struct{}
+	webhookDone      chan struct{}
+	webhookQueue     chan healthSnapshot
+	webhookCancel    context.CancelFunc
+	healthSnapshot   healthSnapshot
+	healthRefreshing bool
+	healthCond       *sync.Cond
+	healthLifecycle  sync.Mutex
+	healthOps        sync.Mutex
+	webhookOps       sync.Mutex
+	healthError      string
+	webhookError     string
+	droppedUsage     uint64
 }
 
 var activeRuntime = newRuntime(cgoHostClient{})
@@ -28,6 +46,7 @@ var activeRuntime = newRuntime(cgoHostClient{})
 func newRuntime(host hostClient) *runtimeState {
 	r := &runtimeState{host: host, cfg: defaultConfig()}
 	r.cond = sync.NewCond(&r.mu)
+	r.healthCond = sync.NewCond(&r.mu)
 	return r
 }
 
@@ -35,14 +54,61 @@ func (r *runtimeState) applyConfig(cfg pluginConfig) {
 	r.mu.Lock()
 	r.cfg = cfg
 	r.hasSnapshot = false
+	if r.closed {
+		r.closed = false
+	}
 	r.mu.Unlock()
+	r.configureHealth(cfg)
 }
 
 func (r *runtimeState) shutdown() {
+	r.healthLifecycle.Lock()
+	defer r.healthLifecycle.Unlock()
 	r.mu.Lock()
 	r.closed = true
+	store, stop, done, queue := r.healthStore, r.healthStop, r.healthDone, r.healthQueue
+	webhookStop, webhookDone, webhookQueue, webhookCancel := r.webhookStop, r.webhookDone, r.webhookQueue, r.webhookCancel
+	r.healthStore, r.healthStop, r.healthDone, r.healthQueue = nil, nil, nil, nil
+	r.webhookStop, r.webhookDone, r.webhookQueue, r.webhookCancel = nil, nil, nil, nil
 	r.cond.Broadcast()
 	r.mu.Unlock()
+	if stop != nil {
+		close(stop)
+		<-done
+	}
+	if webhookCancel != nil {
+		webhookCancel()
+	}
+	if webhookStop != nil {
+		close(webhookStop)
+		<-webhookDone
+	}
+	if queue != nil {
+		for {
+			select {
+			case <-queue:
+				atomic.AddUint64(&r.droppedUsage, 1)
+			default:
+				goto drained
+			}
+		}
+	drained:
+	}
+	if webhookQueue != nil {
+		for {
+			select {
+			case <-webhookQueue:
+			default:
+				goto webhookDrained
+			}
+		}
+	webhookDrained:
+	}
+	r.healthOps.Lock()
+	if store != nil {
+		store.close()
+	}
+	r.healthOps.Unlock()
 }
 
 func (r *runtimeState) handleManagement(req managementRequest) managementResponse {
@@ -64,6 +130,12 @@ func (r *runtimeState) handleManagement(req managementRequest) managementRespons
 		return accountListResponse(entries, req.Query)
 	case req.Method == http.MethodGet && path == statusRoute:
 		return r.status()
+	case req.Method == http.MethodGet && path == healthRoute:
+		return r.healthResponse(req.Query)
+	case req.Method == http.MethodGet && path == incidentsRoute:
+		return r.listIncidents(req.Query)
+	case req.Method == http.MethodGet && path == historyRoute:
+		return r.listHistory(req.Query)
 	default:
 		return jsonError(http.StatusNotFound, "not_found", "plugin route not found")
 	}
@@ -159,7 +231,9 @@ func (r *runtimeState) status() managementResponse {
 		PluginID: pluginID, Version: pluginVersion,
 		CacheTTL: r.cfg.CacheTTL.String(), RequestTimeout: r.cfg.RequestTimeout.String(),
 		MaxConcurrency: r.cfg.MaxConcurrency, IncludeDisabled: r.cfg.IncludeDisabled,
-		HasSnapshot: r.hasSnapshot, Refreshing: r.refreshing,
+		HasSnapshot: r.hasSnapshot, Refreshing: r.refreshing, HealthEnabled: r.healthStore != nil,
+		HealthSnapshotAt: r.healthSnapshot.GeneratedAt, DroppedUsageCount: atomic.LoadUint64(&r.droppedUsage),
+		DatabaseError: r.healthError, WebhookConfigured: r.cfg.WebhookURL != "", WebhookError: r.webhookError,
 	}
 	if r.hasSnapshot {
 		payload.GeneratedAt = r.snapshot.GeneratedAt

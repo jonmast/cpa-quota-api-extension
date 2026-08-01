@@ -54,6 +54,7 @@ import (
 type hostClient interface {
 	listAuth(context.Context) ([]hostAuthFileEntry, error)
 	getAuth(context.Context, string) (json.RawMessage, error)
+	getAuthRuntime(context.Context, string) (hostAuthFileEntry, error)
 	doHTTP(context.Context, hostHTTPRequest) (hostHTTPResponse, error)
 	log(string, string, map[string]any)
 }
@@ -91,6 +92,18 @@ func (cgoHostClient) getAuth(_ context.Context, authIndex string) (json.RawMessa
 		return nil, fmt.Errorf("decode host auth get: %w", err)
 	}
 	return response.JSON, nil
+}
+
+func (cgoHostClient) getAuthRuntime(_ context.Context, authIndex string) (hostAuthFileEntry, error) {
+	result, err := callHost(methodHostAuthGetRuntime, hostAuthGetRequest{AuthIndex: authIndex})
+	if err != nil {
+		return hostAuthFileEntry{}, err
+	}
+	var response hostAuthGetRuntimeResponse
+	if err := json.Unmarshal(result, &response); err != nil {
+		return hostAuthFileEntry{}, fmt.Errorf("decode host auth runtime: %w", err)
+	}
+	return response.Auth, nil
 }
 
 func (cgoHostClient) doHTTP(_ context.Context, request hostHTTPRequest) (hostHTTPResponse, error) {
