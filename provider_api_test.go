@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sync"
 	"testing"
 	"time"
 )
@@ -787,5 +788,412 @@ func TestOpenCodeGoPartialUsagePayload(t *testing.T) {
 	}
 	if account.Status != "exhausted" {
 		t.Fatalf("status = %s", account.Status)
+	}
+}
+
+// --- Issue #8: provider-nested response shape ---
+
+// providerByKey returns the providerQuota for a key, failing the test if absent.
+func providerByKey(t *testing.T, snapshot quotaResponse, key string) providerQuota {
+	t.Helper()
+	p, ok := snapshot.Providers[key]
+	if !ok {
+		t.Fatalf("providers map missing key %q; have %v", key, mapKeys(snapshot.Providers))
+	}
+	return p
+}
+
+func mapKeys(m map[string]providerQuota) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
+// TestResponseHasProvidersMap checks that the quota response carries a providers
+// map and that each provider present in the accounts list appears as a key.
+func TestResponseHasProvidersMap(t *testing.T) {
+	host := newFakeHost().
+		withEntry(hostAuthFileEntry{AuthIndex: "claude-1", Name: "claude.json", Provider: "claude"}).
+		withEntry(hostAuthFileEntry{AuthIndex: "copilot-1", Name: "copilot.json", Provider: "copilot"}).
+		withEntry(openCodeGoEntry()).
+		withCredential("claude-1", `{"access_token":"sk-ant-oat-test"}`).
+		withCredential("copilot-1", `{"access_token":"gho_test_token"}`).
+		withCredential("opencode-go-1", `{"type":"opencode-go","api_key":"oc_test_key"}`).
+		withJSON(claudeQuotaURL, `{"five_hour":{"utilization":30,"resets_at":"2026-07-27T12:00:00Z"}}`).
+		withJSON(copilotQuotaURL, `{"quota_snapshots":{"premium_interactions":{"percent_remaining":50,"reset_date":"2026-09-01T00:00:00Z"}}}`).
+		withJSON(openCodeGoQuotaURL, openCodeGoUsagePayload)
+
+	snapshot := quotaSnapshotJSON(t, host, nil)
+
+	if snapshot.Providers == nil {
+		t.Fatal("providers map is nil")
+	}
+	for _, key := range []string{"claude", "copilot", "opencode-go"} {
+		if _, ok := snapshot.Providers[key]; !ok {
+			t.Errorf("providers map missing key %q", key)
+		}
+	}
+}
+
+// TestProvidersMapWindowsNestedUnderKey checks that windows from each provider
+// are nested under the provider key, not just in the flat accounts list.
+func TestProvidersMapWindowsNestedUnderKey(t *testing.T) {
+	host := newFakeHost().
+		withEntry(hostAuthFileEntry{AuthIndex: "claude-1", Name: "claude.json", Provider: "claude"}).
+		withEntry(hostAuthFileEntry{AuthIndex: "copilot-1", Name: "copilot.json", Provider: "copilot"}).
+		withCredential("claude-1", `{"access_token":"sk-ant-oat-test"}`).
+		withCredential("copilot-1", `{"access_token":"gho_test_token"}`).
+		withJSON(claudeQuotaURL, `{"five_hour":{"utilization":30,"resets_at":"2026-07-27T12:00:00Z"},"seven_day":{"utilization":10,"resets_at":"2026-08-01T00:00:00Z"}}`).
+		withJSON(copilotQuotaURL, `{"quota_snapshots":{"premium_interactions":{"percent_remaining":50,"reset_date":"2026-09-01T00:00:00Z"},"chat":{"percent_remaining":40,"reset_date":"2026-09-01T00:00:00Z"}}}`)
+
+	snapshot := quotaSnapshotJSON(t, host, nil)
+
+	// Claude windows appear under providers["claude"].
+	claude := providerByKey(t, snapshot, "claude")
+	found := false
+	for _, w := range claude.Windows {
+		if w.ID == "five_hour" {
+			found = true
+			if w.RemainingPercent == nil || *w.RemainingPercent != 70 {
+				t.Fatalf("claude five_hour remaining = %#v", w.RemainingPercent)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("claude providers entry missing five_hour window; have %#v", claude.Windows)
+	}
+
+	// Copilot windows appear under providers["copilot"].
+	copilot := providerByKey(t, snapshot, "copilot")
+	found = false
+	for _, w := range copilot.Windows {
+		if w.ID == "premium_interactions" {
+			found = true
+			if w.RemainingPercent == nil || *w.RemainingPercent != 50 {
+				t.Fatalf("copilot premium_interactions remaining = %#v", w.RemainingPercent)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("copilot providers entry missing premium_interactions window; have %#v", copilot.Windows)
+	}
+}
+
+// TestProvidersMapCarriesEnoughForTightestPill checks that the providers map
+// carries remaining_percent on each window so a client can compute the
+// tightest-across-all-providers value with a provider prefix.
+func TestProvidersMapCarriesEnoughForTightestPill(t *testing.T) {
+	host := newFakeHost().
+		withEntry(hostAuthFileEntry{AuthIndex: "claude-1", Name: "claude.json", Provider: "claude"}).
+		withEntry(openCodeGoEntry()).
+		withCredential("claude-1", `{"access_token":"sk-ant-oat-test"}`).
+		withCredential("opencode-go-1", `{"type":"opencode-go","api_key":"oc_test_key"}`).
+		withJSON(claudeQuotaURL, `{"five_hour":{"utilization":30,"resets_at":"2026-07-27T12:00:00Z"}}`).
+		withJSON(openCodeGoQuotaURL, openCodeGoUsagePayload)
+
+	snapshot := quotaSnapshotJSON(t, host, nil)
+
+	// For each provider in the map a client can derive a tightest remaining_percent.
+	for key, p := range snapshot.Providers {
+		if !p.Supported {
+			continue
+		}
+		if p.Status == "error" {
+			continue
+		}
+		for _, w := range p.Windows {
+			if w.RemainingPercent == nil {
+				t.Errorf("provider %q window %q has nil remaining_percent", key, w.ID)
+			}
+		}
+	}
+
+	// Spot-check: claude five_hour and opencode-go weekly both have remaining_percent.
+	claudeProvider := providerByKey(t, snapshot, "claude")
+	var claudeFiveHour *quotaWindow
+	for i := range claudeProvider.Windows {
+		if claudeProvider.Windows[i].ID == "five_hour" {
+			claudeFiveHour = &claudeProvider.Windows[i]
+		}
+	}
+	if claudeFiveHour == nil || claudeFiveHour.RemainingPercent == nil {
+		t.Fatal("claude five_hour missing remaining_percent")
+	}
+
+	goProvider := providerByKey(t, snapshot, "opencode-go")
+	var goWeekly *quotaWindow
+	for i := range goProvider.Windows {
+		if goProvider.Windows[i].ID == "weekly" {
+			goWeekly = &goProvider.Windows[i]
+		}
+	}
+	if goWeekly == nil || goWeekly.RemainingPercent == nil {
+		t.Fatal("opencode-go weekly missing remaining_percent")
+	}
+
+	// The two remaining percents are numerically comparable (same semantics).
+	if *claudeFiveHour.RemainingPercent != 70 || *goWeekly.RemainingPercent != 70 {
+		t.Fatalf("percents not comparable: claude=%v go=%v", *claudeFiveHour.RemainingPercent, *goWeekly.RemainingPercent)
+	}
+}
+
+// TestProvidersMapRetainsPerAccountFields checks that the provider-level entry
+// keeps status, supported, credential_state, and error visible so a client can
+// detect a partial failure without walking the accounts list.
+func TestProvidersMapRetainsPerAccountFields(t *testing.T) {
+	host := newFakeHost().
+		withEntry(hostAuthFileEntry{AuthIndex: "claude-1", Name: "claude.json", Provider: "claude"}).
+		withCredential("claude-1", `{"access_token":"sk-ant-oat-test"}`).
+		withTransportError(claudeQuotaURL, errors.New("dial tcp: connection refused"))
+
+	snapshot := quotaSnapshotJSON(t, host, nil)
+
+	p := providerByKey(t, snapshot, "claude")
+	if p.Status != "error" {
+		t.Fatalf("provider status = %q, want error", p.Status)
+	}
+	if !p.Supported {
+		t.Fatalf("provider supported should be true even on fetch error")
+	}
+	if p.Error == nil || p.Error.Code != "quota_fetch_failed" {
+		t.Fatalf("provider error = %#v", p.Error)
+	}
+	// The error must also be visible via the accounts list.
+	if len(p.Accounts) != 1 || p.Accounts[0].Error == nil {
+		t.Fatalf("provider accounts = %#v", p.Accounts)
+	}
+}
+
+// TestProvidersMapShowsErroredProviderAlongsideHealthy checks that one
+// provider erroring does not hide others from the providers map.
+func TestProvidersMapShowsErroredProviderAlongsideHealthy(t *testing.T) {
+	host := newFakeHost().
+		withEntry(hostAuthFileEntry{AuthIndex: "copilot-1", Name: "copilot.json", Provider: "copilot"}).
+		withEntry(hostAuthFileEntry{AuthIndex: "claude-1", Name: "claude.json", Provider: "claude"}).
+		withCredential("copilot-1", `{"access_token":"gho_test_token"}`).
+		withCredential("claude-1", `{"access_token":"sk-ant-oat-test"}`).
+		withTransportError(copilotQuotaURL, errors.New("dial tcp: connection refused")).
+		withJSON(claudeQuotaURL, `{"five_hour":{"utilization":40,"resets_at":"2026-07-27T12:00:00Z"}}`)
+
+	snapshot := quotaSnapshotJSON(t, host, nil)
+
+	copilot := providerByKey(t, snapshot, "copilot")
+	if copilot.Status != "error" || copilot.Error == nil {
+		t.Fatalf("copilot provider = %#v", copilot)
+	}
+
+	claude := providerByKey(t, snapshot, "claude")
+	if claude.Status != "available" || claude.Error != nil {
+		t.Fatalf("claude provider = %#v", claude)
+	}
+	found := false
+	for _, w := range claude.Windows {
+		if w.ID == "five_hour" {
+			found = true
+			if w.RemainingPercent == nil || *w.RemainingPercent != 60 {
+				t.Fatalf("claude five_hour remaining = %#v", w.RemainingPercent)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("claude five_hour window missing from providers map")
+	}
+}
+
+// TestProvidersMapCarriesClaudeModelsAndBindingWindow checks that Claude-specific
+// fields (scoped models, binding window, extra usage) propagate to the providers
+// map, not just the flat accounts list.
+func TestProvidersMapCarriesClaudeModelsAndBindingWindow(t *testing.T) {
+	host := newFakeHost().
+		withEntry(hostAuthFileEntry{AuthIndex: "claude-1", Name: "claude.json", Provider: "claude"}).
+		withCredential("claude-1", `{"access_token":"sk-ant-oat-test"}`).
+		withJSON(claudeQuotaURL, claudeFullPayload)
+
+	snapshot := quotaSnapshotJSON(t, host, nil)
+
+	p := providerByKey(t, snapshot, "claude")
+	if len(p.Models) != 2 {
+		t.Fatalf("provider models = %d, want 2: %#v", len(p.Models), p.Models)
+	}
+	if p.BindingWindow == nil || p.BindingWindow.ID != "five_hour" {
+		t.Fatalf("provider binding_window = %#v", p.BindingWindow)
+	}
+	if p.ExtraUsedCredits == nil || *p.ExtraUsedCredits != 500 {
+		t.Fatalf("provider extra_used_credits = %#v", p.ExtraUsedCredits)
+	}
+	if p.ExtraMonthlyLimit == nil || *p.ExtraMonthlyLimit != 5000 {
+		t.Fatalf("provider extra_monthly_limit = %#v", p.ExtraMonthlyLimit)
+	}
+}
+
+// TestProvidersMapAccountsListPreserved checks that the providers map carries
+// the per-account list so no information is collapsed.
+func TestProvidersMapAccountsListPreserved(t *testing.T) {
+	host := newFakeHost().
+		withEntry(hostAuthFileEntry{AuthIndex: "claude-1", Name: "claude.json", Provider: "claude"}).
+		withCredential("claude-1", `{"access_token":"sk-ant-oat-test"}`).
+		withJSON(claudeQuotaURL, `{"five_hour":{"utilization":30,"resets_at":"2026-07-27T12:00:00Z"}}`)
+
+	snapshot := quotaSnapshotJSON(t, host, nil)
+
+	p := providerByKey(t, snapshot, "claude")
+	if len(p.Accounts) != 1 {
+		t.Fatalf("provider accounts len = %d, want 1", len(p.Accounts))
+	}
+	if p.Accounts[0].AuthIndex != "claude-1" {
+		t.Fatalf("provider accounts[0].auth_index = %q", p.Accounts[0].AuthIndex)
+	}
+	if p.Accounts[0].Provider != "claude" {
+		t.Fatalf("provider accounts[0].provider = %q", p.Accounts[0].Provider)
+	}
+}
+
+// TestProvidersMapInRawJSON checks that the providers map is present and
+// properly keyed in the raw response JSON so a client reading the wire format
+// sees the nested structure.
+func TestProvidersMapInRawJSON(t *testing.T) {
+	host := newFakeHost().
+		withEntry(hostAuthFileEntry{AuthIndex: "claude-1", Name: "claude.json", Provider: "claude"}).
+		withEntry(hostAuthFileEntry{AuthIndex: "copilot-1", Name: "copilot.json", Provider: "copilot"}).
+		withCredential("claude-1", `{"access_token":"sk-ant-oat-test"}`).
+		withCredential("copilot-1", `{"access_token":"gho_test_token"}`).
+		withJSON(claudeQuotaURL, `{"five_hour":{"utilization":30,"resets_at":"2026-07-27T12:00:00Z"}}`).
+		withJSON(copilotQuotaURL, `{"quota_snapshots":{"premium_interactions":{"percent_remaining":50,"reset_date":"2026-09-01T00:00:00Z"}}}`)
+
+	runtime := newRuntime(host)
+	runtime.applyConfig(pluginConfig{CacheTTL: 30 * time.Minute, RequestTimeout: time.Second, MaxConcurrency: 4})
+	resp := runtime.handleManagement(managementRequest{Method: http.MethodGet, Path: quotaRoute})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+
+	for _, needle := range []string{`"providers"`, `"claude"`, `"copilot"`, `"remaining_percent"`} {
+		if !bytes.Contains(resp.Body, []byte(needle)) {
+			t.Errorf("response body missing %q", needle)
+		}
+	}
+}
+
+// TestCachingSecondCallWithinTTLDoesNotRefetch checks that a second management
+// handler call within the TTL does not re-hit upstream providers.
+func TestCachingSecondCallWithinTTLDoesNotRefetch(t *testing.T) {
+	host := newFakeHost().
+		withEntry(hostAuthFileEntry{AuthIndex: "claude-1", Name: "claude.json", Provider: "claude"}).
+		withCredential("claude-1", `{"access_token":"sk-ant-oat-test"}`).
+		withJSON(claudeQuotaURL, `{"five_hour":{"utilization":30,"resets_at":"2026-07-27T12:00:00Z"}}`)
+
+	runtime := newRuntime(host)
+	runtime.applyConfig(pluginConfig{CacheTTL: 30 * time.Minute, RequestTimeout: time.Second, MaxConcurrency: 4})
+
+	// First call — cache miss.
+	resp1 := runtime.handleManagement(managementRequest{Method: http.MethodGet, Path: quotaRoute})
+	if resp1.StatusCode != http.StatusOK {
+		t.Fatalf("first call status = %d", resp1.StatusCode)
+	}
+	var snap1 quotaResponse
+	if err := json.Unmarshal(resp1.Body, &snap1); err != nil {
+		t.Fatal(err)
+	}
+	if snap1.Cached {
+		t.Fatal("first call should not be cached")
+	}
+
+	// Second call — should be served from cache.
+	resp2 := runtime.handleManagement(managementRequest{Method: http.MethodGet, Path: quotaRoute})
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("second call status = %d", resp2.StatusCode)
+	}
+	var snap2 quotaResponse
+	if err := json.Unmarshal(resp2.Body, &snap2); err != nil {
+		t.Fatal(err)
+	}
+	if !snap2.Cached {
+		t.Fatal("second call should be cached")
+	}
+	// Providers map must still be present in cached response.
+	if _, ok := snap2.Providers["claude"]; !ok {
+		t.Fatal("providers map missing claude key in cached response")
+	}
+	// Only one upstream request despite two handler calls.
+	if host.requestCount(claudeQuotaURL) != 1 {
+		t.Fatalf("expected 1 upstream request, got %d", host.requestCount(claudeQuotaURL))
+	}
+}
+
+// TestForcedRefreshBypasessTTL checks that ?refresh=true bypasses the cache
+// and triggers a new upstream fetch.
+func TestForcedRefreshBypassesTTL(t *testing.T) {
+	host := newFakeHost().
+		withEntry(hostAuthFileEntry{AuthIndex: "claude-1", Name: "claude.json", Provider: "claude"}).
+		withCredential("claude-1", `{"access_token":"sk-ant-oat-test"}`).
+		withJSON(claudeQuotaURL, `{"five_hour":{"utilization":30,"resets_at":"2026-07-27T12:00:00Z"}}`)
+
+	runtime := newRuntime(host)
+	runtime.applyConfig(pluginConfig{CacheTTL: 30 * time.Minute, RequestTimeout: time.Second, MaxConcurrency: 4})
+
+	// First call fills the cache.
+	runtime.handleManagement(managementRequest{Method: http.MethodGet, Path: quotaRoute})
+
+	// Second call with refresh=true forces a new upstream fetch.
+	resp := runtime.handleManagement(managementRequest{
+		Method: http.MethodGet,
+		Path:   quotaRoute,
+		Query:  map[string][]string{"refresh": {"true"}},
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var snap quotaResponse
+	if err := json.Unmarshal(resp.Body, &snap); err != nil {
+		t.Fatal(err)
+	}
+	if snap.Cached {
+		t.Fatal("forced refresh response should not be cached")
+	}
+	if host.requestCount(claudeQuotaURL) != 2 {
+		t.Fatalf("expected 2 upstream requests after forced refresh, got %d", host.requestCount(claudeQuotaURL))
+	}
+}
+
+// TestConcurrentManagementCallersShareOneRefresh checks that concurrent
+// management handler calls during an active refresh share a single upstream
+// fetch (no duplicate provider calls).
+func TestConcurrentManagementCallersShareOneRefresh(t *testing.T) {
+	host := newFakeHost().
+		withEntry(hostAuthFileEntry{AuthIndex: "claude-1", Name: "claude.json", Provider: "claude"}).
+		withCredential("claude-1", `{"access_token":"sk-ant-oat-test"}`).
+		withJSON(claudeQuotaURL, `{"five_hour":{"utilization":30,"resets_at":"2026-07-27T12:00:00Z"}}`)
+
+	runtime := newRuntime(host)
+	runtime.applyConfig(pluginConfig{CacheTTL: 30 * time.Minute, RequestTimeout: time.Second, MaxConcurrency: 4})
+
+	const callers = 8
+	var wg sync.WaitGroup
+	errs := make(chan string, callers)
+	for i := 0; i < callers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			resp := runtime.handleManagement(managementRequest{Method: http.MethodGet, Path: quotaRoute})
+			if resp.StatusCode != http.StatusOK {
+				errs <- "status != 200"
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for msg := range errs {
+		t.Error(msg)
+	}
+
+	// listAuth (and by extension all provider HTTP calls) must have been issued
+	// exactly once — the fakeHost listDelay creates the concurrent window.
+	if calls := host.listAuthCount(); calls != 1 {
+		t.Fatalf("listAuth calls = %d, want 1", calls)
+	}
+	if host.requestCount(claudeQuotaURL) != 1 {
+		t.Fatalf("claude upstream requests = %d, want 1", host.requestCount(claudeQuotaURL))
 	}
 }
