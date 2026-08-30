@@ -139,6 +139,11 @@ type quotaWindow struct {
 	RemainingPercent *float64   `json:"remaining_percent,omitempty"`
 	ResetAt          *time.Time `json:"reset_at,omitempty"`
 	WindowSeconds    int64      `json:"window_seconds,omitempty"`
+	// UsedDollars and LimitDollars are optional monetary figures retained for
+	// client display. Percent fields stay authoritative for comparison across
+	// providers; these are informational only.
+	UsedDollars  *float64 `json:"used_dollars,omitempty"`
+	LimitDollars *float64 `json:"limit_dollars,omitempty"`
 }
 
 type modelQuota struct {

@@ -20,7 +20,32 @@ const (
 	antigravitySandboxURL = "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:fetchAvailableModels"
 	claudeQuotaURL        = "https://api.anthropic.com/api/oauth/usage"
 	copilotQuotaURL       = "https://api.github.com/copilot_internal/user"
+	openCodeGoQuotaURL    = "https://opencode.ai/zen/go/v1/usage"
 )
+
+const (
+	// openCodeGoProvider is the normalized provider name for OpenCode Go. It
+	// matches the provider_key attribute emitted by the auth-parser plugin.
+	openCodeGoProvider = "opencode-go"
+	// compatProvider is the CPA provider the auth-parser plugin emits so the
+	// credential routes through the built-in compatibility executor.
+	compatProvider = "openai-compatibility"
+)
+
+// openCodeGoWindows are the OpenCode Go usage windows and their dollar caps.
+// The API reports a used percent per window; the caps let the plugin retain the
+// underlying dollar figures for client display without changing percent
+// semantics, which stay identical to every other provider.
+var openCodeGoWindows = []struct {
+	id            string
+	key           string
+	capDollars    float64
+	windowSeconds int64
+}{
+	{id: "rolling", key: "rolling", capDollars: 12, windowSeconds: 5 * 60 * 60},
+	{id: "weekly", key: "weekly", capDollars: 30, windowSeconds: 7 * 24 * 60 * 60},
+	{id: "monthly", key: "monthly", capDollars: 60},
+}
 
 type providerFetcher func(context.Context, hostClient, pluginConfig, hostAuthFileEntry, json.RawMessage) accountQuota
 
@@ -48,6 +73,8 @@ func fetchAccountQuota(ctx context.Context, host hostClient, cfg pluginConfig, e
 		"antigravity": fetchAntigravityQuota,
 		"claude":      fetchClaudeQuota,
 		"copilot":     fetchCopilotQuota,
+
+		openCodeGoProvider: fetchOpenCodeGoQuota,
 	}[provider]
 	if fetcher == nil {
 		return base
@@ -257,6 +284,67 @@ func fetchCopilotQuota(ctx context.Context, host hostClient, cfg pluginConfig, e
 	return result
 }
 
+// fetchOpenCodeGoQuota reads the OpenCode Go usage endpoint with the API key
+// emitted by the auth-parser plugin as a bearer token. The payload is
+// {"usage":{"rolling":..,"weekly":..,"monthly":..}} where each window carries a
+// status, a used percent and a reset timestamp.
+func fetchOpenCodeGoQuota(ctx context.Context, host hostClient, cfg pluginConfig, entry hostAuthFileEntry, raw json.RawMessage) accountQuota {
+	result := supportedBase(entry, openCodeGoProvider)
+	doc := parseDocument(raw)
+	apiKey := firstNonEmpty(lookupString(doc, "api_key"), lookupString(doc, "apiKey"), lookupString(doc, "key"))
+	if apiKey == "" {
+		result.Status = "error"
+		result.Error = &quotaError{Code: "credential_incomplete", Message: "OpenCode Go api_key is missing"}
+		return result
+	}
+	resp, err := doProviderRequest(ctx, host, cfg, hostHTTPRequest{
+		Method: http.MethodGet, URL: openCodeGoQuotaURL,
+		Headers: map[string][]string{
+			"Authorization": {"Bearer " + apiKey},
+			"Accept":        {"application/json"},
+			"User-Agent":    {"cpa-quota-api-extension/" + pluginVersion},
+		},
+	})
+	if err != nil {
+		return withFetchError(result, err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(resp.Body, &payload); err != nil {
+		return withParseError(result, "invalid OpenCode Go quota response")
+	}
+	usage, _ := payload["usage"].(map[string]any)
+	result.Windows = parseOpenCodeGoWindows(usage)
+	result.FetchedAt = time.Now().UTC()
+	result.Status = statusFromWindows(result.Windows)
+	return result
+}
+
+func parseOpenCodeGoWindows(usage map[string]any) []quotaWindow {
+	var windows []quotaWindow
+	for _, spec := range openCodeGoWindows {
+		raw, _ := usage[spec.key].(map[string]any)
+		if raw == nil {
+			continue
+		}
+		used := numberPtr(raw["percent"])
+		window := quotaWindow{
+			ID:               spec.id,
+			UsedPercent:      used,
+			RemainingPercent: inversePercent(used),
+			ResetAt:          timePtr(firstValueAny(raw["resetsAt"], raw["resets_at"])),
+			WindowSeconds:    spec.windowSeconds,
+		}
+		limit := spec.capDollars
+		window.LimitDollars = &limit
+		if used != nil {
+			spent := math.Round(limit**used) / 100
+			window.UsedDollars = &spent
+		}
+		windows = append(windows, window)
+	}
+	return windows
+}
+
 func supportedBase(entry hostAuthFileEntry, provider string) accountQuota {
 	return accountQuota{AuthIndex: entry.AuthIndex, Name: entry.Name, Provider: provider, Email: entry.Email, ProjectID: entry.ProjectID, CredentialState: credentialState(entry), Status: "unknown", Supported: true}
 }
@@ -306,7 +394,24 @@ func normalizedProvider(entry hostAuthFileEntry) string {
 	if provider == "gemini" {
 		return "gemini-cli"
 	}
+	// The auth-parser plugin emits OpenCode Go as an openai-compatibility auth
+	// so it routes through the built-in compat executor. The host does not
+	// expose auth attributes on the list entry, so the credential is identified
+	// by its stable auth ID / file name instead of provider_key.
+	if provider == compatProvider && isOpenCodeGoEntry(entry) {
+		return openCodeGoProvider
+	}
 	return provider
+}
+
+func isOpenCodeGoEntry(entry hostAuthFileEntry) bool {
+	for _, candidate := range []string{entry.ID, entry.Name, entry.Label} {
+		name := strings.ToLower(strings.TrimSpace(candidate))
+		if strings.TrimSuffix(name, ".json") == openCodeGoProvider {
+			return true
+		}
+	}
+	return false
 }
 func credentialState(entry hostAuthFileEntry) string {
 	if entry.Disabled {
