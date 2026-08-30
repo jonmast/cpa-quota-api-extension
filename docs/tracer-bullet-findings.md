@@ -145,3 +145,97 @@ is a better description than "CPA retains legacy paths for schema_version < 3".
 The remaining acceptance criteria are a live deploy, and until that runs, items 1
 and 4 above are the real residual risk for tickets that depend on
 `host.auth.get` behaviour (Copilot, OpenCode Go).
+
+---
+
+# Deployment environment (added 2026-08-30)
+
+Investigation of the actual target ahead of the deploy half of #2. This
+**corrects the environment note in spec #1** and replaces guesswork about the
+host with what is actually deployed.
+
+## The spec names the wrong host
+
+Spec #1 states "The running CPA is at `http://cpamp.homelab.jonmast.com`". That
+host is a *different application*:
+
+| Host | Image | What it is | Defined in |
+|---|---|---|---|
+| `cpamp.homelab.jonmast.com` | `seakee/cpa-manager-plus:v1.12.6` | Separate management UI (CPAMGMT) | `k8s-conf/apps/cpamp/release.yaml` |
+| `cliproxy.homelab.jonmast.com` | `eceasy/cli-proxy-api:v7.2.137` | **The actual CLIProxyAPI** | `k8s-conf/apps/cliproxyapi/release.yaml` |
+
+Two corrections follow: the deploy target is `cliproxy...`, not `cpamp...`; and
+the running version is **v7.2.137**, not the "~v7.2.145" assumed in #1. The
+schema-version conclusion is unaffected (see above — there is no lower-bound
+rejection at all), but any future assertion about upstream behaviour should be
+checked against v7.2.137.
+
+## How it is deployed
+
+Kubernetes, via Flux GitOps — a `HelmRelease` using the `bjw-s/app-template`
+chart. There is no host to `scp` to; changes normally flow through the
+`k8s-conf` repo.
+
+Two properties of the config matter for this work:
+
+- The config is seeded onto a PVC by an initContainer using `cp -n`, so it
+  **never overwrites**. Panel edits persist and the live config intentionally
+  drifts from the SOPS-encrypted seed in git. Reading `config.sops.yaml` does
+  not tell you what the live config says.
+- The app rewrites the file on startup to bcrypt-hash the management secret key,
+  so it is never byte-identical to the seed even before any edit.
+
+## The blocker: no path into the container for the artifact
+
+CPA loads plugins from `plugins.dir`, resolved relative to the workdir
+`/CLIProxyAPI` — so `/CLIProxyAPI/plugins/linux/amd64/`. In the live deployment:
+
+- the `plugins:` block is **absent from the config entirely**;
+- the image is stock upstream, with no plugin directory;
+- the only PVC (`auth`) mounts `/root/.cli-proxy-api`, **not** the workdir.
+
+The artifact therefore has nowhere to live today. This is an infrastructure
+decision, not a code change, and it gates every remaining acceptance criterion
+on #2.
+
+Options considered:
+
+1. **Custom image** `FROM eceasy/cli-proxy-api` that `COPY`s the `.so` into the
+   plugin directory, pinned by digest in the `HelmRelease`. GitOps-native and
+   reproducible; survives restart and rescheduling. Costs a registry and a build
+   pipeline.
+2. **Plugins PVC + initContainer** fetching the artifact. No image build, but
+   adds a fetch dependency to pod startup.
+3. **Manual `kubectl cp` into the running pod.** Lost on any reschedule, so it
+   is a *verification* technique rather than a deployment.
+
+**Decision (operator, 2026-08-30):** use option 3 for now — a throwaway copy to
+answer the open runtime questions on #2. A durable mechanism is deferred until
+after the plugin is known to load and work.
+
+## Binary compatibility: checked and clear
+
+The risk that would have invalidated the whole approach is a libc mismatch
+between the NixOS build host and the container. It is fine:
+
+- The artifact requires at most `GLIBC_2.34` (`objdump -T`); the container is
+  `debian:bookworm`, which ships glibc 2.36.
+- `NEEDED` entries are plain sonames (`libc.so.6`, `libdl.so.2`,
+  `libpthread.so.0`, `libresolv.so.2`).
+- The nix `RUNPATH` pointing at `/nix/store/...` is harmless: absent directories
+  are skipped and the loader falls back to the container's search path.
+
+So the `.so` built here should `dlopen` inside the running container. That is a
+static-analysis conclusion; the live copy is what proves it.
+
+## What the live run still has to answer
+
+Unchanged from the list above, now with a concrete target:
+
+1. That the plugin loads under **v7.2.137** with `schemaVersion` 1.
+2. That `host.auth.get` returns a readable **Copilot** credential with the field
+   names the #6 fetcher expects.
+3. That the **OpenCode Go** auth is not silently `UnregisterClient`'d — spec #1
+   calls this the likeliest silent failure.
+4. That the three provider adapters, built entirely against *recorded* payloads,
+   match what the real APIs return.
