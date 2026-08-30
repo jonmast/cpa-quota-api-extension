@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"sync"
 	"testing"
 	"time"
 )
@@ -52,7 +51,7 @@ func TestHostHTTPResponseMatchesPluginAPIWireShape(t *testing.T) {
 }
 
 func TestConcurrentSnapshotRefreshIsDeduplicated(t *testing.T) {
-	host := &fakeHost{entries: []hostAuthFileEntry{{AuthIndex: "a", Name: "unknown.json", Provider: "unknown"}}}
+	host := newFakeHost().withEntry(hostAuthFileEntry{AuthIndex: "a", Name: "unknown.json", Provider: "unknown"})
 	runtime := newRuntime(host)
 	runtime.applyConfig(pluginConfig{CacheTTL: 30 * time.Minute, RequestTimeout: time.Second, MaxConcurrency: 2})
 
@@ -70,33 +69,7 @@ func TestConcurrentSnapshotRefreshIsDeduplicated(t *testing.T) {
 	for i := 0; i < 8; i++ {
 		<-results
 	}
-	host.mu.Lock()
-	calls := host.listCalls
-	host.mu.Unlock()
-	if calls != 1 {
+	if calls := host.listAuthCount(); calls != 1 {
 		t.Fatalf("host list calls = %d, want 1", calls)
 	}
 }
-
-type fakeHost struct {
-	mu        sync.Mutex
-	entries   []hostAuthFileEntry
-	listCalls int
-}
-
-func (f *fakeHost) listAuth(context.Context) ([]hostAuthFileEntry, error) {
-	f.mu.Lock()
-	f.listCalls++
-	entries := append([]hostAuthFileEntry(nil), f.entries...)
-	f.mu.Unlock()
-	time.Sleep(20 * time.Millisecond)
-	return entries, nil
-}
-func (f *fakeHost) getAuth(context.Context, string) (json.RawMessage, error) { return nil, nil }
-func (f *fakeHost) getAuthRuntime(context.Context, string) (hostAuthFileEntry, error) {
-	return hostAuthFileEntry{}, nil
-}
-func (f *fakeHost) doHTTP(context.Context, hostHTTPRequest) (hostHTTPResponse, error) {
-	return hostHTTPResponse{}, nil
-}
-func (f *fakeHost) log(string, string, map[string]any) {}
