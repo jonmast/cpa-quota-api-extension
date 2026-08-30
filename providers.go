@@ -189,6 +189,7 @@ func fetchClaudeQuota(ctx context.Context, host hostClient, cfg pluginConfig, en
 	if err := json.Unmarshal(resp.Body, &payload); err != nil {
 		return withParseError(result, "invalid Claude quota response")
 	}
+	// Top-level five_hour and seven_day windows.
 	for _, item := range []struct{ id, key string }{{"five_hour", "five_hour"}, {"seven_day", "seven_day"}} {
 		window, _ := payload[item.key].(map[string]any)
 		if window == nil {
@@ -197,8 +198,17 @@ func fetchClaudeQuota(ctx context.Context, host hostClient, cfg pluginConfig, en
 		used := numberPtr(window["utilization"])
 		result.Windows = append(result.Windows, quotaWindow{ID: item.id, UsedPercent: used, RemainingPercent: inversePercent(used), ResetAt: timePtr(window["resets_at"])})
 	}
+	// Scoped weekly model limits from limits[].
+	limits, _ := payload["limits"].([]any)
+	result.Models = parseClaudeScopedLimits(limits)
+	// Extra usage credits against monthly limit.
+	result.Windows, result.ExtraUsedCredits, result.ExtraMonthlyLimit = parseClaudeExtraUsage(payload, result.Windows)
+	// Binding window: use the API's own active-window indicator.
+	if bw := parseClaudeBindingWindow(limits); bw != "" {
+		result.BindingWindow = &bindingWindow{ID: bw}
+	}
 	result.FetchedAt = time.Now().UTC()
-	result.Status = statusFromWindows(result.Windows)
+	result.Status = statusFromClaudeAccount(result.Windows, result.Models)
 	return result
 }
 
@@ -479,6 +489,181 @@ func timePtr(v any) *time.Time {
 	t = t.UTC()
 	return &t
 }
+// parseClaudeScopedLimits extracts per-model weekly quota from limits[].
+func parseClaudeScopedLimits(limits []any) []modelQuota {
+	if len(limits) == 0 {
+		return nil
+	}
+	var models []modelQuota
+	seen := make(map[string]bool)
+	for _, raw := range limits {
+		entry, _ := raw.(map[string]any)
+		if entry == nil {
+			continue
+		}
+		kind, _ := entry["kind"].(string)
+		group, _ := entry["group"].(string)
+		if kind != "weekly_scoped" || group != "weekly" {
+			continue
+		}
+		used := numberPtr(entry["percent"])
+		if used == nil {
+			continue
+		}
+		scope, _ := entry["scope"].(map[string]any)
+		if scope == nil {
+			continue
+		}
+		model, _ := scope["model"].(map[string]any)
+		if model == nil {
+			continue
+		}
+		modelID, _ := model["id"].(string)
+		modelName, _ := model["display_name"].(string)
+		if modelName == "" {
+			continue
+		}
+		slug := claudeSlug(firstNonEmpty(modelID, modelName))
+		if slug == "" {
+			continue
+		}
+		id := "claude-weekly-scoped-" + slug
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		models = append(models, modelQuota{
+			Model:            id,
+			ModelName:        modelName,
+			RemainingPercent: inversePercent(used),
+			ResetAt:          timePtr(entry["resets_at"]),
+		})
+	}
+	return models
+}
+
+// parseClaudeExtraUsage maps used_credits/monthly_limit to an extra-usage window.
+func parseClaudeExtraUsage(payload map[string]any, windows []quotaWindow) ([]quotaWindow, *int64, *int64) {
+	extra, _ := payload["extra_usage"].(map[string]any)
+	if extra == nil {
+		return windows, nil, nil
+	}
+	enabled, _ := extra["is_enabled"].(bool)
+	if !enabled {
+		return windows, nil, nil
+	}
+	used := int64Value(extra["used_credits"])
+	limit := int64Value(extra["monthly_limit"])
+	if limit <= 0 {
+		return windows, nil, nil
+	}
+	usedCredits := used
+	monthlyLimit := limit
+	var usedPercent float64
+	if limit > 0 {
+		usedPercent = math.Max(0, math.Min(100, float64(used)*100/float64(limit)))
+	}
+	up := &usedPercent
+	windows = append(windows, quotaWindow{
+		ID:               "extra",
+		UsedPercent:      up,
+		RemainingPercent: inversePercent(up),
+	})
+	return windows, &usedCredits, &monthlyLimit
+}
+
+// parseClaudeBindingWindow identifies the window the API reports as binding.
+func parseClaudeBindingWindow(limits []any) string {
+	for _, raw := range limits {
+		entry, _ := raw.(map[string]any)
+		if entry == nil {
+			continue
+		}
+		active, _ := entry["is_active"].(bool)
+		if !active {
+			continue
+		}
+		kind, _ := entry["kind"].(string)
+		switch kind {
+		case "session":
+			return "five_hour"
+		case "weekly_all":
+			return "seven_day"
+		case "weekly_scoped":
+			scope, _ := entry["scope"].(map[string]any)
+			if scope == nil {
+				continue
+			}
+			model, _ := scope["model"].(map[string]any)
+			if model == nil {
+				continue
+			}
+			modelID, _ := model["id"].(string)
+			modelName, _ := model["display_name"].(string)
+			identity := firstNonEmpty(modelID, modelName)
+			slug := claudeSlug(identity)
+			if slug != "" {
+				return "claude-weekly-scoped-" + slug
+			}
+		}
+	}
+	return ""
+}
+
+// claudeSlug lowercases a model identity and replaces non-alphanumeric runs with dashes.
+func claudeSlug(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if s == "" {
+		return ""
+	}
+	var out []rune
+	prevDash := true
+	for _, r := range s {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			out = append(out, r)
+			prevDash = false
+		} else if !prevDash {
+			out = append(out, '-')
+			prevDash = true
+		}
+	}
+	if len(out) > 0 && out[len(out)-1] == '-' {
+		out = out[:len(out)-1]
+	}
+	return string(out)
+}
+
+// statusFromClaudeAccount combines windows and models into a single status.
+func statusFromClaudeAccount(windows []quotaWindow, models []modelQuota) string {
+	for _, w := range windows {
+		if w.RemainingPercent != nil && *w.RemainingPercent > 0 {
+			return "available"
+		}
+	}
+	for _, m := range models {
+		if m.RemainingPercent != nil && *m.RemainingPercent > 0 {
+			return "available"
+		}
+	}
+	if len(windows) > 0 || len(models) > 0 {
+		observed := false
+		for _, w := range windows {
+			if w.RemainingPercent != nil {
+				observed = true
+			}
+		}
+		for _, m := range models {
+			if m.RemainingPercent != nil {
+				observed = true
+			}
+		}
+		if observed {
+			return "exhausted"
+		}
+	}
+	return "unknown"
+}
+
 func firstValueAny(values ...any) any {
 	for _, v := range values {
 		if v != nil {
