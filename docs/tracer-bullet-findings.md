@@ -346,3 +346,71 @@ v0.4.0/v0.5.0/v0.6.0 files were deleted from the pod. The plugin directory is on
 the container's ephemeral layer, so a restart would have discarded them anyway —
 but leaving the config pointing at a version that no longer exists would have
 broken the widget on the next restart.
+
+---
+
+# OpenCode Go live validation (#7, 2026-08-30)
+
+Validated against the real endpoint and through the plugin end to end. **No bugs
+found** — unlike Copilot, the assumptions in spec #1 match reality exactly.
+
+## Payload matches the spec
+
+`GET https://opencode.ai/zen/go/v1/usage` with the key as bearer returns exactly
+the documented shape:
+
+```json
+{"usage": {
+  "rolling": {"status": "ok", "percent": 0,  "resetsAt": "2026-08-30T19:16:30.226Z"},
+  "weekly":  {"status": "ok", "percent": 24, "resetsAt": "2026-08-31T00:00:00.226Z"},
+  "monthly": {"status": "ok", "percent": 53, "resetsAt": "2026-09-11T20:27:49.226Z"}
+}}
+```
+
+`percent` is confirmed to mean **percent used**, not remaining: `rolling` reads 0
+immediately after its 5-hour window reset while `status` is `ok`. Had it meant
+remaining, 0 would imply an exhausted window. The fetcher's
+`RemainingPercent = 100 - percent` is therefore correct.
+
+## End-to-end result through the plugin
+
+```
+opencode-go  rolling  used 0%   $0.00 / $12   reset 2026-08-30T19:16:30Z
+             weekly   used 24%  $7.20 / $30   reset 2026-08-31T00:00:00Z
+             monthly  used 53%  $31.80 / $60  reset 2026-09-11T20:27:49Z
+```
+
+Dollar normalization is correct (24% of $30 = $7.20; 53% of $60 = $31.80), the
+raw figures are retained alongside the percent, and percent semantics are
+identical to Claude and Copilot in the same response. All three providers appear
+under the nested `providers` key together:
+`['claude', 'copilot', 'opencode-go']`.
+
+## How the credential was supplied — and what is still untested
+
+The #4 auth-parser plugin was **not** installed for this run. Instead a minimal
+auth file was placed in the auth directory:
+
+```json
+{"type": "openai-compatibility", "api_key": "<redacted>"}
+```
+
+named `opencode-go.json`. That is sufficient because `normalizedProvider` keys
+OpenCode Go off provider `openai-compatibility` plus the stable file name, which
+is exactly what the auth plugin would emit. The credential was read correctly and
+quota was fetched, so **the quota half of #7 is fully verified**.
+
+What this does *not* verify is #4's own contribution: that the auth-parser plugin
+emits this auth itself, that it registers the model list, and that the auth
+therefore avoids being `UnregisterClient`'d. Those remain unverified, and the
+`UnregisterClient` trap is still the likeliest silent failure in this work.
+
+No errors appeared in the CPA log during the run, and the existing
+`openai-compatibility` routing entry for Opencode Go was unaffected.
+
+## Live state after this exercise
+
+Reverted. The temporary `opencode-go.json` was deleted from the auth PVC, the
+config is back to `version: 0.3.0` with the upstream artifact loaded, and the
+staged `.so` was removed. Note the auth directory *is* persistent storage, unlike
+the plugin directory — that file would have survived a restart had it been left.
