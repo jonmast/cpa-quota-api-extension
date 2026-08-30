@@ -1,20 +1,29 @@
 PLUGIN_NAME ?= cpa-quota-api-extension
+AUTH_PLUGIN_NAME ?= cpa-opencode-go-auth
+AUTH_PLUGIN_DIR ?= ./authplugin
 DIST_DIR ?= dist
 CPA_UPSTREAM ?= upstream/CLIProxyAPI
 CPA_COMPAT_TAG ?= v7.2.61
 
-.PHONY: fmt test build verify-upstream clean
+.PHONY: fmt test build build-quota build-auth verify-upstream clean
 
 fmt:
-	gofmt -w *.go
+	gofmt -w *.go $(AUTH_PLUGIN_DIR)/*.go
 
 test:
 	go test ./...
 
-build:
+build: build-quota build-auth
+
+build-quota:
 	mkdir -p $(DIST_DIR)
 	CGO_ENABLED=1 go build -buildmode=c-shared -trimpath -ldflags='-s -w' -o $(DIST_DIR)/$(PLUGIN_NAME).so .
 	rm -f $(DIST_DIR)/$(PLUGIN_NAME).h
+
+build-auth:
+	mkdir -p $(DIST_DIR)
+	CGO_ENABLED=1 go build -buildmode=c-shared -trimpath -ldflags='-s -w' -o $(DIST_DIR)/$(AUTH_PLUGIN_NAME).so $(AUTH_PLUGIN_DIR)
+	rm -f $(DIST_DIR)/$(AUTH_PLUGIN_NAME).h
 
 verify-upstream:
 	test -f $(CPA_UPSTREAM)/sdk/pluginabi/types.go
@@ -27,6 +36,13 @@ verify-upstream:
 	grep -q 'MethodManagementRegister' $(CPA_UPSTREAM)/sdk/pluginabi/types.go
 	grep -q 'Resources \[\]ResourceRoute' $(CPA_UPSTREAM)/sdk/pluginapi/types.go
 	grep -q 'ResourceBasePath string' $(CPA_UPSTREAM)/sdk/pluginapi/types.go
+	grep -q 'MethodAuthIdentifier' $(CPA_UPSTREAM)/sdk/pluginabi/types.go
+	grep -q 'MethodAuthParse' $(CPA_UPSTREAM)/sdk/pluginabi/types.go
+	grep -q 'MethodModelRegister' $(CPA_UPSTREAM)/sdk/pluginabi/types.go
+	grep -q 'type AuthParseResponse struct' $(CPA_UPSTREAM)/sdk/pluginapi/types.go
+	grep -q 'type ModelRegistrationResponse struct' $(CPA_UPSTREAM)/sdk/pluginapi/types.go
+	grep -q 'compat_name' $(CPA_UPSTREAM)/sdk/cliproxy/service.go
+	grep -q 'provider_key' $(CPA_UPSTREAM)/sdk/cliproxy/service.go
 
 clean:
 	rm -rf $(DIST_DIR)
