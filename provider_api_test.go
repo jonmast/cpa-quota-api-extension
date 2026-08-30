@@ -591,3 +591,201 @@ func TestCopilotRateLimited(t *testing.T) {
 		t.Fatalf("claude = %#v", claude)
 	}
 }
+
+// --- Issue #7: OpenCode Go quota adapter ---
+
+// openCodeGoEntry is the auth list entry the auth-parser plugin produces: an
+// openai-compatibility auth whose ID/file name identify OpenCode Go.
+func openCodeGoEntry() hostAuthFileEntry {
+	return hostAuthFileEntry{
+		AuthIndex: "opencode-go-1",
+		ID:        "opencode-go",
+		Name:      "opencode-go.json",
+		Label:     "OpenCode Go",
+		Provider:  "openai-compatibility",
+		Type:      "openai-compatibility",
+	}
+}
+
+const openCodeGoUsagePayload = `{
+	"usage": {
+		"rolling": {"status": "ok", "percent": 4, "resetsAt": "2026-08-13T16:27:38Z"},
+		"weekly":  {"status": "ok", "percent": 30, "resetsAt": "2026-08-17T00:00:00Z"},
+		"monthly": {"status": "ok", "percent": 25, "resetsAt": "2026-09-13T06:06:01Z"}
+	}
+}`
+
+func TestOpenCodeGoQuotaReachesFetcherThroughManagementHandler(t *testing.T) {
+	host := newFakeHost().
+		withEntry(openCodeGoEntry()).
+		withCredential("opencode-go-1", `{"type":"opencode-go","api_key":"oc_test_key","base_url":"https://opencode.ai/zen/v1"}`).
+		withJSON(openCodeGoQuotaURL, openCodeGoUsagePayload)
+
+	snapshot := quotaSnapshotJSON(t, host, nil)
+
+	account := accountByProvider(t, snapshot, "opencode-go")
+	if !account.Supported || account.Status != "available" || account.Error != nil {
+		t.Fatalf("account = %#v", account)
+	}
+	if len(account.Windows) != 3 {
+		t.Fatalf("windows = %#v", account.Windows)
+	}
+	cases := []struct {
+		id        string
+		used      float64
+		remaining float64
+		dollars   float64
+		limit     float64
+		reset     time.Time
+	}{
+		{"rolling", 4, 96, 0.48, 12, time.Date(2026, 8, 13, 16, 27, 38, 0, time.UTC)},
+		{"weekly", 30, 70, 9, 30, time.Date(2026, 8, 17, 0, 0, 0, 0, time.UTC)},
+		{"monthly", 25, 75, 15, 60, time.Date(2026, 9, 13, 6, 6, 1, 0, time.UTC)},
+	}
+	for _, tc := range cases {
+		window := windowByID(t, account, tc.id)
+		if window.UsedPercent == nil || *window.UsedPercent != tc.used {
+			t.Fatalf("%s used_percent = %#v, want %v", tc.id, window.UsedPercent, tc.used)
+		}
+		if window.RemainingPercent == nil || *window.RemainingPercent != tc.remaining {
+			t.Fatalf("%s remaining_percent = %#v, want %v", tc.id, window.RemainingPercent, tc.remaining)
+		}
+		if window.UsedDollars == nil || *window.UsedDollars != tc.dollars {
+			t.Fatalf("%s used_dollars = %#v, want %v", tc.id, window.UsedDollars, tc.dollars)
+		}
+		if window.LimitDollars == nil || *window.LimitDollars != tc.limit {
+			t.Fatalf("%s limit_dollars = %#v, want %v", tc.id, window.LimitDollars, tc.limit)
+		}
+		if window.ResetAt == nil || !window.ResetAt.Equal(tc.reset) {
+			t.Fatalf("%s reset_at = %#v, want %v", tc.id, window.ResetAt, tc.reset)
+		}
+	}
+	if host.requestCount(openCodeGoQuotaURL) != 1 {
+		t.Fatalf("opencode-go requests = %d", host.requestCount(openCodeGoQuotaURL))
+	}
+}
+
+func TestOpenCodeGoDollarFiguresSurviveJSONRoundTrip(t *testing.T) {
+	host := newFakeHost().
+		withEntry(openCodeGoEntry()).
+		withCredential("opencode-go-1", `{"type":"opencode-go","api_key":"oc_test_key"}`).
+		withJSON(openCodeGoQuotaURL, openCodeGoUsagePayload)
+
+	raw, err := json.Marshal(quotaSnapshotJSON(t, host, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{`"used_dollars"`, `"limit_dollars"`, `"reset_at"`, `"used_percent"`} {
+		if !bytes.Contains(raw, []byte(key)) {
+			t.Fatalf("raw snapshot missing %s: %s", key, raw)
+		}
+	}
+}
+
+// Percent semantics must be identical across providers: a Go percent and a
+// Claude percent are comparable by plain numeric comparison.
+func TestOpenCodeGoPercentSemanticsMatchClaude(t *testing.T) {
+	host := newFakeHost().
+		withEntry(openCodeGoEntry()).
+		withEntry(hostAuthFileEntry{AuthIndex: "claude-1", Name: "claude.json", Provider: "claude"}).
+		withCredential("opencode-go-1", `{"type":"opencode-go","api_key":"oc_test_key"}`).
+		withCredential("claude-1", `{"access_token":"sk-ant-oat-test"}`).
+		withJSON(openCodeGoQuotaURL, openCodeGoUsagePayload).
+		withJSON(claudeQuotaURL, `{
+			"five_hour": {"utilization": 30, "resets_at": "2026-07-27T12:00:00Z"},
+			"seven_day": {"utilization": 10, "resets_at": "2026-08-01T00:00:00Z"}
+		}`)
+
+	snapshot := quotaSnapshotJSON(t, host, nil)
+
+	goWeekly := windowByID(t, accountByProvider(t, snapshot, "opencode-go"), "weekly")
+	claudeFiveHour := windowByID(t, accountByProvider(t, snapshot, "claude"), "five_hour")
+	if *goWeekly.UsedPercent != 30 || *claudeFiveHour.UsedPercent != 30 {
+		t.Fatalf("used percents = %v / %v", *goWeekly.UsedPercent, *claudeFiveHour.UsedPercent)
+	}
+	if *goWeekly.RemainingPercent != *claudeFiveHour.RemainingPercent {
+		t.Fatalf("remaining percents differ: %v vs %v", *goWeekly.RemainingPercent, *claudeFiveHour.RemainingPercent)
+	}
+}
+
+func TestOpenCodeGoRateLimitedRecordedAsPerAccountError(t *testing.T) {
+	host := newFakeHost().
+		withEntry(openCodeGoEntry()).
+		withEntry(hostAuthFileEntry{AuthIndex: "claude-1", Name: "claude.json", Provider: "claude"}).
+		withCredential("opencode-go-1", `{"type":"opencode-go","api_key":"oc_test_key"}`).
+		withCredential("claude-1", `{"access_token":"sk-ant-oat-test"}`).
+		withRateLimit(openCodeGoQuotaURL).
+		withJSON(claudeQuotaURL, `{
+			"five_hour": {"utilization": 30, "resets_at": "2026-07-27T12:00:00Z"}
+		}`)
+
+	snapshot := quotaSnapshotJSON(t, host, nil)
+
+	account := accountByProvider(t, snapshot, "opencode-go")
+	if account.Status != "error" || account.Error == nil {
+		t.Fatalf("opencode-go = %#v", account)
+	}
+	if account.Error.Code != "quota_fetch_failed" {
+		t.Fatalf("error code = %s", account.Error.Code)
+	}
+	if account.Error.UpstreamStatus != http.StatusTooManyRequests {
+		t.Fatalf("upstream status = %d, want %d", account.Error.UpstreamStatus, http.StatusTooManyRequests)
+	}
+	// No retry or suppression: exactly one upstream attempt.
+	if host.requestCount(openCodeGoQuotaURL) != 1 {
+		t.Fatalf("opencode-go requests = %d", host.requestCount(openCodeGoQuotaURL))
+	}
+	claude := accountByProvider(t, snapshot, "claude")
+	if claude.Status != "available" || claude.Error != nil {
+		t.Fatalf("claude = %#v", claude)
+	}
+}
+
+func TestOpenCodeGoMissingAPIKeyReportsPerAccountError(t *testing.T) {
+	host := newFakeHost().
+		withEntry(openCodeGoEntry()).
+		withCredential("opencode-go-1", `{"type":"opencode-go"}`)
+
+	account := accountByProvider(t, quotaSnapshotJSON(t, host, nil), "opencode-go")
+	if account.Status != "error" || account.Error == nil || account.Error.Code != "credential_incomplete" {
+		t.Fatalf("account = %#v", account)
+	}
+	if !account.Supported {
+		t.Fatalf("account should stay supported: %#v", account)
+	}
+}
+
+// A compatibility auth that is not OpenCode Go must keep reporting
+// supported: false rather than being fetched as OpenCode Go.
+func TestOtherCompatAuthStaysUnsupported(t *testing.T) {
+	host := newFakeHost().
+		withEntry(hostAuthFileEntry{AuthIndex: "compat-1", ID: "some-other", Name: "some-other.json", Provider: "openai-compatibility"}).
+		withCredential("compat-1", `{"api_key":"other"}`)
+
+	account := accountByProvider(t, quotaSnapshotJSON(t, host, nil), "openai-compatibility")
+	if account.Supported || account.Status != "unsupported" {
+		t.Fatalf("account = %#v", account)
+	}
+	if host.requestCount(openCodeGoQuotaURL) != 0 {
+		t.Fatalf("unexpected opencode-go request")
+	}
+}
+
+func TestOpenCodeGoPartialUsagePayload(t *testing.T) {
+	host := newFakeHost().
+		withEntry(openCodeGoEntry()).
+		withCredential("opencode-go-1", `{"type":"opencode-go","api_key":"oc_test_key"}`).
+		withJSON(openCodeGoQuotaURL, `{"usage": {"rolling": {"status": "ok", "percent": 100, "resetsAt": "2026-08-13T16:27:38Z"}}}`)
+
+	account := accountByProvider(t, quotaSnapshotJSON(t, host, nil), "opencode-go")
+	if len(account.Windows) != 1 {
+		t.Fatalf("windows = %#v", account.Windows)
+	}
+	rolling := windowByID(t, account, "rolling")
+	if *rolling.UsedDollars != 12 || *rolling.LimitDollars != 12 {
+		t.Fatalf("rolling dollars = %#v / %#v", rolling.UsedDollars, rolling.LimitDollars)
+	}
+	if account.Status != "exhausted" {
+		t.Fatalf("status = %s", account.Status)
+	}
+}
