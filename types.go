@@ -114,23 +114,23 @@ type managementResponse struct {
 }
 
 type accountQuota struct {
-	AuthIndex        string            `json:"auth_index,omitempty"`
-	Name             string            `json:"name"`
-	Provider         string            `json:"provider"`
-	Email            string            `json:"email,omitempty"`
-	ProjectID        string            `json:"project_id,omitempty"`
-	Plan             string            `json:"plan,omitempty"`
-	CredentialState  string            `json:"credential_state"`
-	Status           string            `json:"status"`
-	Supported        bool              `json:"supported"`
-	FetchedAt        time.Time         `json:"fetched_at,omitempty"`
-	Windows          []quotaWindow     `json:"windows,omitempty"`
-	Models           []modelQuota      `json:"models,omitempty"`
-	BindingWindow    *bindingWindow    `json:"binding_window,omitempty"`
-	ExtraUsedCredits *int64            `json:"extra_used_credits,omitempty"`
-	ExtraMonthlyLimit *int64           `json:"extra_monthly_limit,omitempty"`
-	Error            *quotaError       `json:"error,omitempty"`
-	Metadata         map[string]string `json:"metadata,omitempty"`
+	AuthIndex         string            `json:"auth_index,omitempty"`
+	Name              string            `json:"name"`
+	Provider          string            `json:"provider"`
+	Email             string            `json:"email,omitempty"`
+	ProjectID         string            `json:"project_id,omitempty"`
+	Plan              string            `json:"plan,omitempty"`
+	CredentialState   string            `json:"credential_state"`
+	Status            string            `json:"status"`
+	Supported         bool              `json:"supported"`
+	FetchedAt         time.Time         `json:"fetched_at,omitempty"`
+	Windows           []quotaWindow     `json:"windows,omitempty"`
+	Models            []modelQuota      `json:"models,omitempty"`
+	BindingWindow     *bindingWindow    `json:"binding_window,omitempty"`
+	ExtraUsedCredits  *int64            `json:"extra_used_credits,omitempty"`
+	ExtraMonthlyLimit *int64            `json:"extra_monthly_limit,omitempty"`
+	Error             *quotaError       `json:"error,omitempty"`
+	Metadata          map[string]string `json:"metadata,omitempty"`
 }
 
 type quotaWindow struct {

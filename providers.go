@@ -19,6 +19,7 @@ const (
 	antigravityDailyURL   = "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels"
 	antigravitySandboxURL = "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:fetchAvailableModels"
 	claudeQuotaURL        = "https://api.anthropic.com/api/oauth/usage"
+	copilotQuotaURL       = "https://api.github.com/copilot_internal/user"
 )
 
 type providerFetcher func(context.Context, hostClient, pluginConfig, hostAuthFileEntry, json.RawMessage) accountQuota
@@ -46,6 +47,7 @@ func fetchAccountQuota(ctx context.Context, host hostClient, cfg pluginConfig, e
 		"gemini":      fetchGeminiQuota,
 		"antigravity": fetchAntigravityQuota,
 		"claude":      fetchClaudeQuota,
+		"copilot":     fetchCopilotQuota,
 	}[provider]
 	if fetcher == nil {
 		return base
@@ -209,6 +211,49 @@ func fetchClaudeQuota(ctx context.Context, host hostClient, cfg pluginConfig, en
 	}
 	result.FetchedAt = time.Now().UTC()
 	result.Status = statusFromClaudeAccount(result.Windows, result.Models)
+	return result
+}
+
+func fetchCopilotQuota(ctx context.Context, host hostClient, cfg pluginConfig, entry hostAuthFileEntry, raw json.RawMessage) accountQuota {
+	result := supportedBase(entry, "copilot")
+	doc := parseDocument(raw)
+	token := lookupString(doc, "access_token")
+	if token == "" {
+		result.Status = "error"
+		result.Error = &quotaError{Code: "credential_incomplete", Message: "Copilot access_token is missing"}
+		return result
+	}
+	resp, err := doProviderRequest(ctx, host, cfg, hostHTTPRequest{
+		Method: http.MethodGet, URL: copilotQuotaURL,
+		Headers: map[string][]string{
+			"Authorization": {"Bearer " + token},
+			"Accept":        {"application/json"},
+			"User-Agent":    {"GitHubCopilot/1.0"},
+		},
+	})
+	if err != nil {
+		return withFetchError(result, err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(resp.Body, &payload); err != nil {
+		return withParseError(result, "invalid Copilot quota response")
+	}
+	snapshots, _ := payload["quota_snapshots"].(map[string]any)
+	for _, item := range []struct{ id, key string }{{"premium_interactions", "premium_interactions"}, {"chat", "chat"}, {"completions", "completions"}} {
+		window, _ := snapshots[item.key].(map[string]any)
+		if window == nil {
+			continue
+		}
+		remaining := numberPtr(window["percent_remaining"])
+		result.Windows = append(result.Windows, quotaWindow{
+			ID:               item.id,
+			RemainingPercent: remaining,
+			UsedPercent:      inversePercent(remaining),
+			ResetAt:          timePtr(window["reset_date"]),
+		})
+	}
+	result.FetchedAt = time.Now().UTC()
+	result.Status = statusFromWindows(result.Windows)
 	return result
 }
 
@@ -489,6 +534,7 @@ func timePtr(v any) *time.Time {
 	t = t.UTC()
 	return &t
 }
+
 // parseClaudeScopedLimits extracts per-model weekly quota from limits[].
 func parseClaudeScopedLimits(limits []any) []modelQuota {
 	if len(limits) == 0 {
