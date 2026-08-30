@@ -522,6 +522,44 @@ make build
 
 To test a newer CLIProxyAPI release, update the submodule on a separate branch and verify the intended compatibility tag before changing the production baseline.
 
+### Build targets
+
+`make build` produces two shared objects from the same submodule baseline:
+
+| Artifact | Source | Purpose |
+| --- | --- | --- |
+| `dist/cpa-quota-api-extension.so` | repository root | quota and health Management API extension |
+| `dist/cpa-opencode-go-auth.so` | `authplugin/` | OpenCode Go auth parser and model registrar |
+
+Individual targets are `make build-quota` and `make build-auth`.
+
+### OpenCode Go auth plugin
+
+`cpa-opencode-go-auth.so` turns `auths/opencode-go.json` into a real auth so the
+credential is readable through `host.auth.get` and routable by the built-in
+OpenAI-compatibility executor. See
+[ADR-0001](docs/adr/0001-opencode-go-auth-parser-plugin.md).
+
+Credential file:
+
+```json
+{
+  "type": "opencode-go",
+  "api_key": "<opencode go api key>",
+  "base_url": "https://opencode.ai/zen/v1"
+}
+```
+
+`base_url` is optional and defaults to the plugin's `base-url` config value. The
+emitted auth carries `base_url`, `api_key`, `compat_name`, and `provider_key`
+attributes; the host stamps `path` itself.
+
+Because `compat_name` marks the auth as a compatibility auth, the plugin also
+registers OpenCode Go's model list for the `opencode-go` provider key. Without
+registered models the host silently unregisters the auth — it routes but is
+never selected. Override the list with the `models` config field (comma
+separated) if OpenCode Go's catalog changes.
+
 ## Known limitations
 
 - OAuth token refresh is not implemented yet. Expired credentials return account-level errors without failing the whole pool.
