@@ -239,3 +239,110 @@ Unchanged from the list above, now with a concrete target:
    calls this the likeliest silent failure.
 4. That the three provider adapters, built entirely against *recorded* payloads,
    match what the real APIs return.
+
+---
+
+# Live verification results (2026-08-30)
+
+The plugin was loaded and exercised on the running instance. Method: `kubectl cp`
+the artifact into `/CLIProxyAPI/plugins/linux/amd64/` under a *new* version
+filename, then bump `plugins.configs.cpa-quota-api-extension.store.version`
+through the management API. That triggers `Host.ApplyConfig`
+(`internal/pluginhost/host.go:199`) via `reloadConfigAfterManagementSave`
+(`internal/api/handlers/management/handler.go:206`), which re-selects plugin
+files by version and **hot-reloads without a pod restart**.
+
+A new filename is required: a currently-loaded library cannot be overwritten
+(`internal/pluginstore/install.go:35`).
+
+Management calls go through `cpamp.homelab.jonmast.com`, which fronts the CPA
+management API — this is how `ai-quota.py` already reaches it.
+
+## Confirmed working
+
+- **The fork loads on the live v7.2.137 host** with `abiVersion` 1 and
+  `schemaVersion` 1. The central open question of #2 is answered: yes.
+- **Claude (#5) is correct against the real API.** `five_hour` 90%, `seven_day`
+  63%, `extra` 32.8% (4034 of 6000 credits), a `binding_window` of `seven_day`,
+  and one scoped model window — *Fable* at 65%. Scoped weeklies, extra usage and
+  the API-reported binding window all behave as designed on real data.
+- **The provider-nested shape (#8) is emitted live**, keyed by provider, with the
+  `accounts` list retained alongside.
+- **Copilot (#6) works after two fixes** (below).
+
+## Two real bugs, both invisible to the unit tests
+
+Both came from spec #1 describing payloads that do not match reality. Both were
+caught only by running against the live instance — the exact justification for
+#2 existing.
+
+### 1. Wrong credential field name
+
+The Copilot fetcher read `access_token`; the live credential written by the
+`cliproxyapi-copilot` auth plugin stores it as **`github_access_token`**. The
+first live run returned `credential_incomplete: Copilot access_token is missing`
+and no Copilot data at all.
+
+The token is also a **`ghu_`** GitHub App user-to-server token, not the `gho_`
+OAuth token spec #1 describes.
+
+Fixed by reading `github_access_token` with `access_token` as a fallback.
+
+### 2. Reset date is top-level, not per snapshot
+
+Spec #1 states each `quota_snapshots` entry carries `entitlement`, `remaining`,
+`percent_remaining` and `reset_date`. The real payload has no `reset_date`
+anywhere. Each snapshot carries `"quota_reset_at": 0`, and the actual date is
+top-level:
+
+```json
+"quota_reset_date": "2026-09-01",
+"quota_reset_date_utc": "2026-09-01T00:00:00.000Z"
+```
+
+So every Copilot window reported `reset_at: null` on the first run, silently
+failing the "monthly reset date is reported" criterion on #6 while looking
+healthy.
+
+Fixed by reading top-level `quota_reset_date_utc`, falling back to
+`quota_reset_date`, and applying it to all Copilot windows.
+
+Also observed, not a bug: `chat` and `completions` come back
+`"unlimited": true` with `percent_remaining: 100` and a zero entitlement. They
+report as 100% and therefore never bind the pill, which is the desired outcome.
+
+Post-fix live output:
+
+```
+claude   five_hour 90%   seven_day 63%   extra 32.8%   model Fable 65%
+copilot  premium_interactions 56.6%   chat 100%   completions 100%
+         all reset 2026-09-01T00:00:00Z
+```
+
+## Still unverified: OpenCode Go (#7)
+
+OpenCode Go did not appear, as expected. Two things are missing and neither is a
+defect in #7:
+
+1. The auth-parser plugin from #4 is a **separate artifact that was never
+   installed** on the box.
+2. There is **no OpenCode Go credential file** in the auth directory — it holds
+   only `claude-jon@jonmast.com.json` and `copilot-jonmast.json`. The Go key
+   still lives in the `openai-compatibility` config section, which is precisely
+   the problem #4 exists to solve.
+
+Validating #7 live therefore means installing a second plugin *and* creating a
+credential, which changes routing-relevant state. That is beyond a throwaway
+verification and was deliberately not attempted.
+
+Given both Copilot bugs, **#7's OpenCode Go payload assumptions should be
+treated as unverified** until it runs against the real endpoint.
+
+## Live state after this exercise
+
+Reverted. The config is back to `version: 0.3.0`, the upstream
+`cpa-quota-api-extension-v0.3.0.so` is the loaded artifact, and the staged
+v0.4.0/v0.5.0/v0.6.0 files were deleted from the pod. The plugin directory is on
+the container's ephemeral layer, so a restart would have discarded them anyway —
+but leaving the config pointing at a version that no longer exists would have
+broken the widget on the next restart.

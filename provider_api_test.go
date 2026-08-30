@@ -489,15 +489,45 @@ func TestSnapshotJSONPreservesNewFields(t *testing.T) {
 
 // --- Issue #6: Copilot quota adapter ---
 
+// The real CPA Copilot credential stores the token under
+// "github_access_token" with a ghu_* prefix — not "access_token"/gho_* as spec
+// #1 assumed. Caught by deploying to the live instance (#2), where Copilot came
+// back as credential_incomplete. This pins the real-world field name.
+func TestCopilotReadsGithubAccessTokenField(t *testing.T) {
+	host := newFakeHost().
+		withEntry(hostAuthFileEntry{AuthIndex: "copilot-1", Name: "copilot-jonmast.json", Provider: "copilot"}).
+		withCredential("copilot-1", `{"github_access_token":"ghu_test_token","token_type":"bearer","type":"copilot"}`).
+		withJSON(copilotQuotaURL, `{
+			"quota_snapshots": {
+				"premium_interactions": {"entitlement": 1000, "remaining": 500, "percent_remaining": 50.0, "reset_date": "2026-09-01T00:00:00Z"}
+			}
+		}`)
+
+	account := accountByProvider(t, quotaSnapshotJSON(t, host, nil), "copilot")
+
+	if account.Error != nil {
+		t.Fatalf("unexpected error: %#v", account.Error)
+	}
+	if account.Status != "available" {
+		t.Fatalf("status = %q, want available", account.Status)
+	}
+	premium := windowByID(t, account, "premium_interactions")
+	if premium.RemainingPercent == nil || *premium.RemainingPercent != 50.0 {
+		t.Fatalf("premium_interactions remaining = %#v", premium.RemainingPercent)
+	}
+}
+
 func TestCopilotQuotaReachesFetcherThroughManagementHandler(t *testing.T) {
 	host := newFakeHost().
 		withEntry(hostAuthFileEntry{AuthIndex: "copilot-1", Name: "copilot.json", Provider: "copilot", Email: "user@example.com"}).
 		withCredential("copilot-1", `{"access_token":"gho_test_token"}`).
 		withJSON(copilotQuotaURL, `{
+			"quota_reset_date_utc": "2026-09-01T00:00:00Z",
+			"quota_reset_date": "2026-09-01",
 			"quota_snapshots": {
-				"premium_interactions": {"entitlement": 1000, "remaining": 500, "percent_remaining": 50.0, "reset_date": "2026-09-01T00:00:00Z"},
-				"chat": {"entitlement": 500, "remaining": 200, "percent_remaining": 40.0, "reset_date": "2026-09-01T00:00:00Z"},
-				"completions": {"entitlement": 2000, "remaining": 1000, "percent_remaining": 50.0, "reset_date": "2026-09-01T00:00:00Z"}
+				"premium_interactions": {"entitlement": 1000, "remaining": 500, "percent_remaining": 50.0, "quota_reset_at": 0},
+				"chat": {"entitlement": 500, "remaining": 200, "percent_remaining": 40.0, "quota_reset_at": 0},
+				"completions": {"entitlement": 2000, "remaining": 1000, "percent_remaining": 50.0, "quota_reset_at": 0}
 			}
 		}`)
 

@@ -244,10 +244,18 @@ func fetchClaudeQuota(ctx context.Context, host hostClient, cfg pluginConfig, en
 func fetchCopilotQuota(ctx context.Context, host hostClient, cfg pluginConfig, entry hostAuthFileEntry, raw json.RawMessage) accountQuota {
 	result := supportedBase(entry, "copilot")
 	doc := parseDocument(raw)
-	token := lookupString(doc, "access_token")
+	// The live CPA Copilot credential (written by the cliproxyapi-copilot auth
+	// plugin) stores the OAuth token as "github_access_token", not
+	// "access_token", and it is a ghu_* GitHub App user-to-server token rather
+	// than the gho_* token spec #1 assumed. Verified against the running
+	// instance; "access_token" is kept as a fallback for other writers.
+	token := lookupString(doc, "github_access_token")
+	if token == "" {
+		token = lookupString(doc, "access_token")
+	}
 	if token == "" {
 		result.Status = "error"
-		result.Error = &quotaError{Code: "credential_incomplete", Message: "Copilot access_token is missing"}
+		result.Error = &quotaError{Code: "credential_incomplete", Message: "Copilot github_access_token is missing"}
 		return result
 	}
 	resp, err := doProviderRequest(ctx, host, cfg, hostHTTPRequest{
@@ -265,18 +273,30 @@ func fetchCopilotQuota(ctx context.Context, host hostClient, cfg pluginConfig, e
 	if err := json.Unmarshal(resp.Body, &payload); err != nil {
 		return withParseError(result, "invalid Copilot quota response")
 	}
+	// The reset date is reported once at the top level, not per snapshot.
+	// Verified against the live API (#2): each snapshot carries only
+	// "quota_reset_at": 0, while the real date is "quota_reset_date_utc"
+	// (RFC3339) with "quota_reset_date" (YYYY-MM-DD) as the older form. Spec #1's
+	// per-snapshot "reset_date" field does not exist, which is why reset times
+	// came back null on the first live run.
+	resetAt := timePtr(payload["quota_reset_date_utc"])
+	if resetAt == nil {
+		resetAt = timePtr(payload["quota_reset_date"])
+	}
 	snapshots, _ := payload["quota_snapshots"].(map[string]any)
 	for _, item := range []struct{ id, key string }{{"premium_interactions", "premium_interactions"}, {"chat", "chat"}, {"completions", "completions"}} {
 		window, _ := snapshots[item.key].(map[string]any)
 		if window == nil {
 			continue
 		}
+		// "unlimited" snapshots report percent_remaining 100 with a zero
+		// entitlement; they are reported as-is so they never bind the pill.
 		remaining := numberPtr(window["percent_remaining"])
 		result.Windows = append(result.Windows, quotaWindow{
 			ID:               item.id,
 			RemainingPercent: remaining,
 			UsedPercent:      inversePercent(remaining),
-			ResetAt:          timePtr(window["reset_date"]),
+			ResetAt:          resetAt,
 		})
 	}
 	result.FetchedAt = time.Now().UTC()
