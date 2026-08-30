@@ -43,6 +43,48 @@ Success: `200 OK`.
     "by_provider": {"codex": 12, "antigravity": 10},
     "by_status": {"available": 21, "error": 4}
   },
+  "providers": {
+    "claude": {
+      "status": "available",
+      "supported": true,
+      "credential_state": "active",
+      "error": null,
+      "windows": [
+        {"id": "five_hour", "used_percent": 30, "remaining_percent": 70, "reset_at": "2026-07-27T12:00:00Z"},
+        {"id": "seven_day", "used_percent": 10, "remaining_percent": 90, "reset_at": "2026-08-01T00:00:00Z"},
+        {"id": "extra",     "used_percent": 10, "remaining_percent": 90}
+      ],
+      "models": [
+        {"model": "claude-weekly-scoped-claude-3-5-sonnet", "model_name": "Claude Sonnet", "remaining_percent": 25, "reset_at": "2026-07-30T00:00:00Z"}
+      ],
+      "binding_window": {"id": "five_hour"},
+      "extra_used_credits": 500,
+      "extra_monthly_limit": 5000,
+      "accounts": [{"auth_index": "claude-1", "provider": "claude", "status": "available", "supported": true, "credential_state": "active", "windows": [...]}]
+    },
+    "copilot": {
+      "status": "available",
+      "supported": true,
+      "credential_state": "active",
+      "windows": [
+        {"id": "premium_interactions", "remaining_percent": 50, "used_percent": 50, "reset_at": "2026-09-01T00:00:00Z"},
+        {"id": "chat",                 "remaining_percent": 40, "used_percent": 60, "reset_at": "2026-09-01T00:00:00Z"},
+        {"id": "completions",          "remaining_percent": 50, "used_percent": 50, "reset_at": "2026-09-01T00:00:00Z"}
+      ],
+      "accounts": [...]
+    },
+    "opencode-go": {
+      "status": "available",
+      "supported": true,
+      "credential_state": "active",
+      "windows": [
+        {"id": "rolling",  "used_percent": 4,  "remaining_percent": 96, "used_dollars": 0.48, "limit_dollars": 12, "window_seconds": 18000,  "reset_at": "2026-08-13T16:27:38Z"},
+        {"id": "weekly",   "used_percent": 30, "remaining_percent": 70, "used_dollars": 9,    "limit_dollars": 30, "window_seconds": 604800, "reset_at": "2026-08-17T00:00:00Z"},
+        {"id": "monthly",  "used_percent": 25, "remaining_percent": 75, "used_dollars": 15,   "limit_dollars": 60,                          "reset_at": "2026-09-13T06:06:01Z"}
+      ],
+      "accounts": [...]
+    }
+  },
   "accounts": [],
   "page": {
     "count": 0,
@@ -52,7 +94,29 @@ Success: `200 OK`.
 }
 ```
 
-`refresh=true` bypasses cache freshness but does not create parallel duplicate refreshes.
+### `providers` map
+
+The `providers` object is the primary structured view for thin clients. Each key is a normalized provider name. The value contains:
+
+| field | description |
+|---|---|
+| `status` | `available`, `exhausted`, `error`, `unknown`, or `unsupported` |
+| `supported` | `false` for providers the plugin has no fetcher for |
+| `credential_state` | `active`, `disabled`, or `unavailable` |
+| `error` | present when `status == "error"` — carries `code`, `message`, and optionally `upstream_status` |
+| `windows` | quota windows with `remaining_percent` and `used_percent` on a 0–100 scale; semantics are identical across all providers so numeric comparison works across `providers` keys |
+| `models` | Claude scoped-weekly per-model limits (absent on other providers) |
+| `binding_window` | Claude only: the window the API reports as currently binding |
+| `extra_used_credits` / `extra_monthly_limit` | Claude only: extra-usage credit figures |
+| `accounts` | the full per-account list; a single account per provider is assumed for display but the list is not collapsed |
+
+The `providers` map is always complete — it is not affected by `?provider=` or `?status=` query filters. Those filters apply to the `accounts` list only.
+
+A client computing a tightest-across-all-providers pill iterates `providers`, finds the minimum `remaining_percent` across all windows for each provider, then picks the provider with the lowest minimum. The provider key is the prefix. Percent semantics are identical across Claude, Copilot, and OpenCode Go; OpenCode Go's dollar amounts are normalised to a percent before being stored in `remaining_percent`.
+
+A provider with `status == "error"` is still present in the map with its `error` field populated, so a partial failure is visible rather than silent.
+
+`refresh=true` bypasses cache freshness but does not create parallel duplicate refreshes. Concurrent callers during a refresh share a single upstream fetch.
 
 ## Account inventory
 

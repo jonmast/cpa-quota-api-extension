@@ -219,6 +219,7 @@ func (r *runtimeState) refresh(ctx context.Context, cfg pluginConfig) (quotaResp
 		CacheTTL:    cfg.CacheTTL.String(),
 		RefreshMode: "request-triggered",
 		Accounts:    accounts,
+		Providers:   buildProviders(accounts),
 	}
 	response.Summary = summarizeAccounts(accounts)
 	r.host.log("info", "quota pool snapshot refreshed", map[string]any{
@@ -265,6 +266,36 @@ func summarizeAccounts(accounts []accountQuota) poolSummary {
 		}
 	}
 	return summary
+}
+
+// buildProviders groups accounts by provider key. Top-level fields come from
+// the first account in each group; accounts arrive already sorted by
+// provider+name from refresh so the first entry is stable. The full per-account
+// list is preserved under Accounts.
+func buildProviders(accounts []accountQuota) map[string]providerQuota {
+	if len(accounts) == 0 {
+		return nil
+	}
+	m := make(map[string]providerQuota, 4)
+	for _, account := range accounts {
+		key := account.Provider
+		p := m[key]
+		p.Accounts = append(p.Accounts, account)
+		if len(p.Accounts) == 1 {
+			// First account in this provider group sets the provider-level fields.
+			p.Status = account.Status
+			p.Supported = account.Supported
+			p.CredentialState = account.CredentialState
+			p.Error = account.Error
+			p.Windows = account.Windows
+			p.Models = account.Models
+			p.BindingWindow = account.BindingWindow
+			p.ExtraUsedCredits = account.ExtraUsedCredits
+			p.ExtraMonthlyLimit = account.ExtraMonthlyLimit
+		}
+		m[key] = p
+	}
+	return m
 }
 
 func cloneSnapshot(snapshot quotaResponse) quotaResponse {

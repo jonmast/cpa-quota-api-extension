@@ -174,13 +174,50 @@ type poolSummary struct {
 	ByStatus   map[string]int `json:"by_status"`
 }
 
+// providerQuota is the per-provider entry in the provider-nested response shape.
+// It groups one or more accounts sharing the same provider key and exposes the
+// fields a thin client needs to render a tightest-constraint pill and a
+// per-provider tooltip without needing to know any provider-specific payload
+// format.
+//
+// Top-level fields (status, supported, credential_state, error, windows, …) come
+// from the first account in the sorted account list. A single account per
+// provider is assumed for display; the full account list is retained under
+// Accounts so that assumption stays a display convenience, not a structural one.
+type providerQuota struct {
+	// Status, Supported, CredentialState, and Error mirror the corresponding
+	// accountQuota fields so a client can detect a partial failure at the
+	// provider level without inspecting Accounts.
+	Status          string      `json:"status"`
+	Supported       bool        `json:"supported"`
+	CredentialState string      `json:"credential_state"`
+	Error           *quotaError `json:"error,omitempty"`
+	// Windows, Models, BindingWindow, ExtraUsedCredits, and ExtraMonthlyLimit
+	// expose the quota data a client needs to compute a tightest-across-all-providers
+	// value. Percent semantics are identical across all providers.
+	Windows           []quotaWindow  `json:"windows,omitempty"`
+	Models            []modelQuota   `json:"models,omitempty"`
+	BindingWindow     *bindingWindow `json:"binding_window,omitempty"`
+	ExtraUsedCredits  *int64         `json:"extra_used_credits,omitempty"`
+	ExtraMonthlyLimit *int64         `json:"extra_monthly_limit,omitempty"`
+	// Accounts is the full per-account list. The underlying account list is not
+	// collapsed so multiple accounts per provider remain accessible.
+	Accounts []accountQuota `json:"accounts"`
+}
+
 type quotaResponse struct {
-	GeneratedAt time.Time      `json:"generated_at"`
-	CacheTTL    string         `json:"cache_ttl"`
-	Cached      bool           `json:"cached"`
-	RefreshMode string         `json:"refresh_mode"`
-	Summary     poolSummary    `json:"summary"`
-	Accounts    []accountQuota `json:"accounts"`
+	GeneratedAt time.Time   `json:"generated_at"`
+	CacheTTL    string      `json:"cache_ttl"`
+	Cached      bool        `json:"cached"`
+	RefreshMode string      `json:"refresh_mode"`
+	Summary     poolSummary `json:"summary"`
+	// Providers is the provider-nested view of the snapshot. Each key is a
+	// normalized provider name; the value carries the windows a thin client needs
+	// to compute a tightest-across-all-providers pill and the per-account list for
+	// failure visibility. This map is always complete; it is not affected by the
+	// ?provider or ?status query filters that apply to the Accounts list.
+	Providers map[string]providerQuota `json:"providers,omitempty"`
+	Accounts  []accountQuota           `json:"accounts"`
 }
 
 type statusResponse struct {
