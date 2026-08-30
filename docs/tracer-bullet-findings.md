@@ -342,10 +342,11 @@ treated as unverified** until it runs against the real endpoint.
 
 Reverted. The config is back to `version: 0.3.0`, the upstream
 `cpa-quota-api-extension-v0.3.0.so` is the loaded artifact, and the staged
-v0.4.0/v0.5.0/v0.6.0 files were deleted from the pod. The plugin directory is on
-the container's ephemeral layer, so a restart would have discarded them anyway —
-but leaving the config pointing at a version that no longer exists would have
-broken the widget on the next restart.
+v0.4.0/v0.5.0/v0.6.0 files were deleted from the pod.
+
+**Correction.** An earlier draft of this document claimed a pod restart would
+wipe the plugin directory and "the store reinstalls v0.3.0". The second half is
+wrong — see "Installed plugins do not survive a restart" below.
 
 ---
 
@@ -414,3 +415,54 @@ Reverted. The temporary `opencode-go.json` was deleted from the auth PVC, the
 config is back to `version: 0.3.0` with the upstream artifact loaded, and the
 staged `.so` was removed. Note the auth directory *is* persistent storage, unlike
 the plugin directory — that file would have survived a restart had it been left.
+
+---
+
+# Installed plugins do not survive a pod restart (2026-08-30)
+
+A pre-existing operational risk on the live instance, unrelated to this work but
+uncovered by it. Worth recording because it also determines what a durable
+deployment for this plugin has to look like.
+
+## The plugin directory is not persistent
+
+The app container has exactly one volume mount besides the service-account token:
+
+```
+auth -> /root/.cli-proxy-api
+```
+
+`/CLIProxyAPI/plugins/linux/amd64/` is therefore the container's **writable
+layer**, not persistent storage. Everything installed there is lost when the
+container is replaced.
+
+## Nothing reinstalls them at startup
+
+CPA does reconcile installed plugins against the store at boot, but that path is
+gated behind `configLoadedFromHome` (`cmd/server/main.go:618`) — CPA "home"
+managed mode. This instance loads its config from a local file and its config has
+**no `home:` section**, so the reconciliation never runs. Outside home mode,
+plugin installation happens only in response to an explicit management API call.
+
+## Why it looks persistent today
+
+The pod reports `restarts=0` and has been running since `2026-08-26T23:31:00Z`.
+All three plugins were installed *after* that point (container-local mtimes:
+copilot Aug 26 22:14, quota-center Aug 29 16:08, cpa-quota-api-extension Aug 29
+16:12). Nothing has restarted since they were installed, so their persistence has
+never actually been exercised.
+
+## The failure mode
+
+On the next restart — Flux reconcile, node drain, image bump, eviction, OOM —
+every `.so` disappears while `config.yaml`, which *is* on the persistent auth
+PVC, still lists all three plugins as enabled. The GitHub Copilot **provider**
+plugin is among them, so this is not limited to quota display.
+
+## Consequence for deploying this plugin
+
+This rules out `kubectl cp` as anything but a verification technique, and it
+argues for the durable options previously listed: bake the artifacts into a
+custom image `FROM eceasy/cli-proxy-api` pinned by digest, or mount a plugins
+volume and populate it from an initContainer. Either fixes the pre-existing
+exposure for the already-installed plugins at the same time.
