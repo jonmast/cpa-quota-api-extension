@@ -1,8 +1,14 @@
 # ADR-0001: Make OpenCode Go a real auth via an auth-parser plugin
 
-- **Status:** Accepted
+- **Status:** Accepted, partly amended by
+  [ADR-0002](0002-discover-opencode-go-models-at-runtime.md)
 - **Date:** 2026-08-29
 - **Context issue:** [#1](https://github.com/jonmast/cpa-quota-api-extension/issues/1)
+
+> **Amendment:** the "Required companion behaviour" section and the first
+> consequence below are superseded. The model list is discovered from the
+> provider at runtime, not hardcoded, and `model.for_auth` — not
+> `model.register` — is what registers the auth. See ADR-0002.
 
 ## Context
 
@@ -55,7 +61,9 @@ The plugin **must** register OpenCode Go's model list for its provider key
 
 ## Consequences
 
-- OpenCode Go's model list moves out of `config.yaml` and into plugin code. Accepted.
+- ~~OpenCode Go's model list moves out of `config.yaml` and into plugin code.~~
+  Superseded by ADR-0002: the list is discovered from the provider's `/models`
+  endpoint at runtime and is hardcoded nowhere.
 - The repo gains a second build artifact and a second thing to deploy.
 - **Failure mode to watch:** if model registration is missing or wrong, the auth
   routes but is never selected, and nothing obviously errors. This is silent and

@@ -64,20 +64,28 @@ func TestAuthIdentifierMatchesCredentialType(t *testing.T) {
 	}
 }
 
-// A compat auth with no registered models for its provider key is silently
-// UnregisterClient'd by the host: it routes but is never selected, and nothing
-// errors. Assert the registration response directly.
-func TestModelRegistrationIsNonEmptyForProviderKey(t *testing.T) {
+// model.for_auth is the call that actually registers a compat auth: the host
+// short-circuits on its result (sdk/cliproxy/service.go:1942) before reaching
+// the branch that would unregister an auth with no models. So it, not
+// model.register, is what must be non-empty and well-formed.
+func TestModelsForAuthAreNonEmptyAndWellFormed(t *testing.T) {
 	resetConfig(t)
-	var reg modelRegistrationResponse
-	callMethod(t, methodModelRegister, nil, &reg)
-	if reg.Provider != providerKey {
-		t.Fatalf("provider=%q want %q", reg.Provider, providerKey)
+	resetDiscovery(t)
+	withHost(t, okHost(t))
+
+	var models modelResponse
+	callMethod(t, methodModelForAuth, authModelRequest{
+		AuthID:     "opencode-go",
+		Attributes: map[string]string{"api_key": "sk-test", "base_url": defaultBaseURL},
+	}, &models)
+
+	if models.Provider != providerKey {
+		t.Fatalf("provider=%q want %q", models.Provider, providerKey)
 	}
-	if len(reg.Models) == 0 {
-		t.Fatal("no models registered: the compat auth would be silently unregistered")
+	if len(models.Models) != len(recordedModelIDs(t)) {
+		t.Fatalf("registered %d models, provider serves %d", len(models.Models), len(recordedModelIDs(t)))
 	}
-	for _, model := range reg.Models {
+	for _, model := range models.Models {
 		if model.ID == "" {
 			t.Fatalf("model with empty ID: %#v", model)
 		}
@@ -87,12 +95,67 @@ func TestModelRegistrationIsNonEmptyForProviderKey(t *testing.T) {
 	}
 }
 
+// A discovery failure must report an error rather than an empty list: the host
+// returns early on error without unregistering (sdk/cliproxy/service.go:1186),
+// whereas an empty list would drop the auth entirely.
+func TestModelsForAuthReportsErrorRatherThanEmptyList(t *testing.T) {
+	resetConfig(t)
+	resetDiscovery(t)
+	withHost(t, &fakeHost{response: hostHTTPResponse{StatusCode: 503}})
+
+	raw, err := handleMethod(methodModelForAuth, mustJSON(t, authModelRequest{
+		AuthID:     "opencode-go",
+		Attributes: map[string]string{"api_key": "sk-test"},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var env envelope
+	if err := json.Unmarshal(raw, &env); err != nil {
+		t.Fatal(err)
+	}
+	if env.OK || env.Error == nil || env.Error.Code != "model_discovery_failed" {
+		t.Fatalf("envelope=%s", raw)
+	}
+}
+
+// model.static has no credential, so before any auth is parsed it legitimately
+// reports nothing. Asserting it is non-empty would be asserting a hardcoded
+// list back into existence.
+func TestStaticModelsAreEmptyUntilSomethingIsDiscovered(t *testing.T) {
+	resetConfig(t)
+	resetDiscovery(t)
+
+	var static modelResponse
+	callMethod(t, methodModelStatic, nil, &static)
+	if len(static.Models) != 0 {
+		t.Fatalf("static models before discovery=%#v", static.Models)
+	}
+
+	withHost(t, okHost(t))
+	callMethod(t, methodModelForAuth, authModelRequest{
+		AuthID:     "opencode-go",
+		Attributes: map[string]string{"api_key": "sk-test"},
+	}, &modelResponse{})
+
+	callMethod(t, methodModelStatic, nil, &static)
+	if len(static.Models) != len(recordedModelIDs(t)) {
+		t.Fatalf("static models after discovery=%d", len(static.Models))
+	}
+}
+
 // The registered provider and the emitted provider_key attribute must be the
 // same string, otherwise model lookup misses and the auth is unregistered.
 func TestRegisteredProviderMatchesEmittedProviderKeyAttribute(t *testing.T) {
 	resetConfig(t)
-	var reg modelRegistrationResponse
-	callMethod(t, methodModelRegister, nil, &reg)
+	resetDiscovery(t)
+	withHost(t, okHost(t))
+
+	var reg modelResponse
+	callMethod(t, methodModelForAuth, authModelRequest{
+		AuthID:     "opencode-go",
+		Attributes: map[string]string{"api_key": "sk-test"},
+	}, &reg)
 
 	var parsed authParseResponse
 	callMethod(t, methodAuthParse, authParseRequest{

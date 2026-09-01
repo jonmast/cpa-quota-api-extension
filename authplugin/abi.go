@@ -40,12 +40,9 @@ import "unsafe"
 
 //export cliproxy_plugin_init
 func cliproxy_plugin_init(host *C.cliproxy_host_api, plugin *C.cliproxy_plugin_api) C.int {
-	// This plugin makes no host callbacks; the host API pointer is unused
-	// beyond the ABI version handshake.
-	if host == nil || plugin == nil {
-		return 1
-	}
-	if uint32(host.abi_version) != abiVersion {
+	// The host API pointer is retained: model discovery issues its GET /models
+	// through the host.http.do callback so CPA's proxy config is honoured.
+	if host == nil || plugin == nil || !installHost(unsafe.Pointer(host)) {
 		return 1
 	}
 	plugin.abi_version = C.uint32_t(abiVersion)

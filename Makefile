@@ -39,6 +39,12 @@ verify-upstream:
 	grep -q 'MethodAuthIdentifier' $(CPA_UPSTREAM)/sdk/pluginabi/types.go
 	grep -q 'MethodAuthParse' $(CPA_UPSTREAM)/sdk/pluginabi/types.go
 	grep -q 'MethodModelRegister' $(CPA_UPSTREAM)/sdk/pluginabi/types.go
+	grep -q 'MethodModelStatic' $(CPA_UPSTREAM)/sdk/pluginabi/types.go
+	grep -q 'MethodModelForAuth' $(CPA_UPSTREAM)/sdk/pluginabi/types.go
+	grep -q 'type AuthModelRequest struct' $(CPA_UPSTREAM)/sdk/pluginapi/types.go
+	grep -q 'type ModelResponse struct' $(CPA_UPSTREAM)/sdk/pluginapi/types.go
+	grep -q 'host_callback_id' $(CPA_UPSTREAM)/internal/pluginhost/rpc_schema.go
+	grep -q 'MethodHostHTTPDo' $(CPA_UPSTREAM)/internal/pluginhost/host_callbacks.go
 	grep -q 'type AuthParseResponse struct' $(CPA_UPSTREAM)/sdk/pluginapi/types.go
 	grep -q 'type ModelRegistrationResponse struct' $(CPA_UPSTREAM)/sdk/pluginapi/types.go
 	grep -q 'compat_name' $(CPA_UPSTREAM)/sdk/cliproxy/service.go

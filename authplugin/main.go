@@ -11,7 +11,7 @@ import (
 
 const (
 	pluginID      = "cpa-opencode-go-auth"
-	pluginVersion = "0.1.0"
+	pluginVersion = "0.2.0"
 
 	// authType is the value of the "type" field in auths/opencode-go.json.
 	// The host derives AuthParseRequest.Provider from it and routes the parse
@@ -29,30 +29,21 @@ const (
 	// authProvider is the CPA provider that owns the built-in compatibility executor.
 	authProvider = "openai-compatibility"
 
-	defaultBaseURL = "https://opencode.ai/zen/v1"
+	// defaultBaseURL is the OpenCode *Go* endpoint. The plain /zen/v1 host is a
+	// different product and does not serve this credential's models.
+	defaultBaseURL = "https://opencode.ai/zen/go/v1"
 )
 
-// defaultModels is OpenCode Go's model list. It lives here rather than in
-// config.yaml because a compat auth with no registered models is unregistered
-// by the host without an error (see docs/adr/0001).
-func defaultModels() []string {
-	return []string{
-		"grok-code",
-		"code-supernova",
-		"qwen3-coder",
-		"kimi-k2",
-		"glm-4.6",
-		"minimax-m2",
-	}
-}
-
+// authPluginConfig holds the plugin's configuration. Models is empty unless an
+// operator pins an explicit list; the normal path discovers models from the
+// provider at runtime. See docs/adr/0002.
 type authPluginConfig struct {
 	BaseURL string
 	Models  []string
 }
 
 func defaultAuthPluginConfig() authPluginConfig {
-	return authPluginConfig{BaseURL: defaultBaseURL, Models: defaultModels()}
+	return authPluginConfig{BaseURL: defaultBaseURL}
 }
 
 var (
@@ -84,7 +75,7 @@ func pluginRegistration() registration {
 			GitHubRepository: "https://github.com/dinhkarate/cpa-quota-api-extension",
 			ConfigFields: []configField{
 				{Name: "base-url", Type: "string", Description: "OpenAI-compatible base URL for OpenCode Go. Default: " + defaultBaseURL + "."},
-				{Name: "models", Type: "string", Description: "Comma-separated model IDs registered for the opencode-go provider key. Defaults to the built-in OpenCode Go list."},
+				{Name: "models", Type: "string", Description: "Optional comma-separated model IDs to pin for the opencode-go provider key. Leave unset to discover models from the provider's /models endpoint."},
 			},
 		},
 		Capabilities: registrationCapabilities{
@@ -95,10 +86,27 @@ func pluginRegistration() registration {
 	}
 }
 
+// modelRegistration answers model.register and model.static. Neither call
+// carries a credential, so neither can discover: it reports a pinned list if
+// one is configured, otherwise the last discovered list, otherwise nothing.
+//
+// An empty response here is safe. The host prefers ModelProvider over
+// ModelRegistrar (internal/pluginhost/adapters.go:260) and per-auth
+// registration short-circuits before the compat-auth unregister branch
+// (sdk/cliproxy/service.go:1942), so models supplied by model.for_auth are what
+// actually register the auth.
 func modelRegistration() modelRegistrationResponse {
 	cfg := currentConfig()
-	models := make([]modelInfo, 0, len(cfg.Models))
-	for _, id := range cfg.Models {
+	ids := cfg.Models
+	if len(ids) == 0 {
+		ids = discoveryCache.any()
+	}
+	return buildModelResponse(ids)
+}
+
+func buildModelResponse(ids []string) modelRegistrationResponse {
+	models := make([]modelInfo, 0, len(ids))
+	for _, id := range ids {
 		id = strings.TrimSpace(id)
 		if id == "" {
 			continue
@@ -115,6 +123,32 @@ func modelRegistration() modelRegistrationResponse {
 		})
 	}
 	return modelRegistrationResponse{Provider: providerKey, Models: models}
+}
+
+// modelsForAuth answers model.for_auth, the only ABI entry point that receives
+// the credential. It fetches the live model list from the provider.
+func modelsForAuth(req authModelRequest) (modelResponse, error) {
+	cfg := currentConfig()
+	if len(cfg.Models) > 0 {
+		registered := buildModelResponse(cfg.Models)
+		return modelResponse{Provider: registered.Provider, Models: registered.Models}, nil
+	}
+
+	apiKey := strings.TrimSpace(req.Attributes["api_key"])
+	if apiKey == "" {
+		return modelResponse{}, fmt.Errorf("auth %q has no api_key attribute", req.AuthID)
+	}
+	baseURL := strings.TrimSpace(req.Attributes["base_url"])
+	if baseURL == "" {
+		baseURL = cfg.BaseURL
+	}
+
+	ids, err := discoverModels(activeHost, baseURL, apiKey, req.HostCallbackID)
+	if err != nil {
+		return modelResponse{}, err
+	}
+	registered := buildModelResponse(ids)
+	return modelResponse{Provider: registered.Provider, Models: registered.Models}, nil
 }
 
 // opencodeGoCredential is the on-disk shape of auths/opencode-go.json.
@@ -214,9 +248,24 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 		return okEnvelope(pluginRegistration())
 	case methodModelRegister:
 		return okEnvelope(modelRegistration())
-	case methodModelStatic, methodModelForAuth:
+	case methodModelStatic:
 		registered := modelRegistration()
 		return okEnvelope(modelResponse{Provider: registered.Provider, Models: registered.Models})
+	case methodModelForAuth:
+		var req authModelRequest
+		if len(request) > 0 {
+			if err := json.Unmarshal(request, &req); err != nil {
+				return nil, fmt.Errorf("decode model for-auth request: %w", err)
+			}
+		}
+		resp, err := modelsForAuth(req)
+		if err != nil {
+			// Reporting an error (rather than an empty model list) leaves any
+			// existing registration intact: the host returns early without
+			// unregistering (sdk/cliproxy/service.go:1186).
+			return errorEnvelope("model_discovery_failed", err.Error(), true, 0), nil
+		}
+		return okEnvelope(resp)
 	case methodAuthIdentifier:
 		return okEnvelope(identifierResponse{Identifier: authType})
 	case methodAuthParse:
