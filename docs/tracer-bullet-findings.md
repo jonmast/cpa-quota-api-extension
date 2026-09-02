@@ -588,3 +588,70 @@ Three plugins, all unversioned, verified present in the published image:
 
 The third-party plugin is included because it shares the same ephemerality and
 its absence is the actual live outage.
+
+---
+
+# Durable deployment live (#10, #11 closed, 2026-09-01)
+
+Deployed `ghcr.io/jonmast/cliproxy-api-with-plugins:0.5.0` via Flux. All three
+plugins load from the baked-in path, and **survive a deliberate pod deletion** —
+the criterion no previous run had ever met.
+
+```
+pluginhost: plugin registered plugin_id=cliproxyapi-copilot      version=0.3.3
+pluginhost: plugin registered plugin_id=cpa-opencode-go-auth     version=0.2.0
+pluginhost: plugin registered plugin_id=cpa-quota-api-extension  version=0.3.0
+```
+
+All four management routes answer 200, all three providers report live, and the
+panel renders (`text/html`, 21963 bytes) — closing the one #2 criterion that had
+never been checked.
+
+## The config-deletion trap, and the way through it
+
+Removing the `store:` blocks was necessary (unversioned baked filenames would
+otherwise be silently skipped), but **the management API cannot delete a nested
+key**.
+
+`SaveConfigPreserveComments` *merges* the in-memory config into the existing
+file (`internal/config/config.go:1167-1213`). `mergeMappingPreserve` only adds
+or updates keys present in the generated node (`:1349-1367`), so keys present in
+the file but absent from memory survive untouched. `PATCH {"store": null}`
+returns HTTP 200 and updates memory — the API then reports the block gone — while
+the file keeps it. On restart the file wins.
+
+**This is a genuine footgun: the management API will report a successful
+deletion that did not happen.**
+
+The way through, suggested by the operator: `pruneMappingToGeneratedKeys` prunes
+at the `plugins.configs` level (`:1210`), so removing a *whole entry* does
+persist. `DELETE /v0/management/plugins/<id>` followed by
+`PUT /v0/management/plugins/<id>/config {"enabled": true}` rewrites the entry
+clean. `DeletePlugin` tolerates a missing `.so`
+(`errors.Is(errRemove, os.ErrNotExist)`), which matters because the files were
+already gone.
+
+Verified on disk rather than through the API, precisely because the two had
+been shown to disagree.
+
+## Final live plugin config
+
+| Plugin | enabled | `store:` |
+|---|---|---|
+| `cliproxyapi-copilot` | true | none |
+| `cpa-quota-api-extension` | true | none |
+| `cpa-opencode-go-auth` | true | none |
+| `quota-center` | false | present |
+
+`quota-center` was left untouched: it is disabled and not baked into the image,
+so it can never load. If it is ever wanted, it needs the same treatment.
+
+## Residual risks
+
+1. **Renovate still bumps `eceasy/cli-proxy-api` in `k8s-conf`, which no longer
+   controls the deployment.** The base version now lives in this repo's
+   Dockerfile. The two can drift silently, and Renovate does not watch this repo.
+2. **A future store install through the panel would re-add a `store:` block** for
+   these IDs and silently disable them again on the next restart.
+3. Nothing alerts when a plugin fails to load. A CPA with no plugins passes its
+   TCP probes, which is why #11 went unnoticed for two days.
