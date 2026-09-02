@@ -466,3 +466,69 @@ argues for the durable options previously listed: bake the artifacts into a
 custom image `FROM eceasy/cli-proxy-api` pinned by digest, or mount a plugins
 volume and populate it from an initContainer. Either fixes the pre-existing
 exposure for the already-installed plugins at the same time.
+
+---
+
+# Durable deployment: custom image (#10, 2026-09-01)
+
+#2 is closed. Its verification work is done; what remained was that the plugin
+had been *proven*, not *deployed*. Every live run so far used `kubectl cp` into
+the container's ephemeral writable layer, then reverted. This section records
+the build half of the durable replacement.
+
+**Decision (operator, 2026-09-01):** custom image, digest-pinned, over a
+plugins-PVC + initContainer. Built in **this** repo and published to `ghcr.io`,
+with only the HelmRelease in `k8s-conf` — following the existing
+`ghcr.io/jonmast/llm-wake-proxy` precedent, where the image is built in its own
+repo and `k8s-conf` holds only the manifest.
+
+Worth noting this is a new pipeline, not an edit to an existing one: `k8s-conf`
+has no Dockerfiles and no registry push in any of its four workflows, and this
+repo had no CI at all.
+
+## Building in-distro closes the libc question
+
+The earlier NixOS-built artifact required reasoning from `objdump -T` that it
+*should* load inside a Debian container — glibc 2.34 required against the
+container's 2.36, with a `/nix/store/...` RUNPATH assumed harmless. That was a
+static-analysis conclusion.
+
+Building in `golang:1.24-bookworm` against a bookworm runtime removes the
+question. The resulting artifacts link only:
+
+```
+linux-vdso.so.1
+libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6
+/lib64/ld-linux-x86-64.so.2
+```
+
+No nix RUNPATH, and none of the `libdl.so.2` / `libpthread.so.0` /
+`libresolv.so.2` entries the nix build produced. Container glibc confirmed as
+`Debian GLIBC 2.36-9+deb12u14`.
+
+## Verified by dlopen inside the runtime image
+
+Not asserted — executed. A throwaway loader compiled against the same base
+`dlopen`'d both baked-in artifacts and resolved every symbol the CPA host looks
+up (`internal/pluginhost/loader_unix.go`):
+
+```
+PASS /CLIProxyAPI/plugins/linux/amd64/cpa-quota-api-extension.so
+PASS /CLIProxyAPI/plugins/linux/amd64/cpa-opencode-go-auth.so
+  cliproxy_plugin_init, cliproxyPluginCall, cliproxyPluginFree, cliproxyPluginShutdown
+```
+
+This proves the artifacts load in the deployment environment. It does **not**
+prove CPA accepts them at runtime — that is the live half of #10.
+
+## Still open on #10
+
+1. The `k8s-conf` HelmRelease change, digest-pinned.
+2. The `plugins:` config block, which is **absent from the live config
+   entirely**. Note the config-drift trap: the live config lives on the PVC and
+   is seeded with `cp -n`, which never overwrites. Editing the SOPS seed alone
+   will not change a running instance.
+3. **Survival across a deliberate pod deletion** — the criterion that
+   distinguishes this from every previous run.
+4. **The panel resource renders** — carried over from #2, where it was the one
+   acceptance criterion never checked.
