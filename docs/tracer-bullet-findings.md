@@ -532,3 +532,59 @@ prove CPA accepts them at runtime — that is the live half of #10.
    distinguishes this from every previous run.
 4. **The panel resource renders** — carried over from #2, where it was the one
    acceptance criterion never checked.
+
+## Amendment (2026-09-01): the predicted failure has occurred
+
+The restart-survival risk recorded above is no longer hypothetical. Renovate
+bumped the deployment from v7.2.137 to **v7.2.146**, the pod was replaced at
+`2026-08-30T18:11:16Z`, and `/CLIProxyAPI/plugins` no longer exists. All four
+configured plugins are gone, including `cliproxyapi-copilot` — the Copilot
+**provider** plugin — so Copilot models are unserved. Filed as #11.
+
+Nothing alerted, because a CPA with no plugins passes its TCP probes.
+
+## Two corrections to the record
+
+1. **The live config was never fully reverted.**
+   `cpa-quota-api-extension.store.version` reads **0.6.0**, not the 0.3.0 this
+   document previously claimed the instance had been restored to.
+2. **The deployed version moves under us.** Any pin written here is a snapshot;
+   Renovate bumps `k8s-conf` independently. The image must track it.
+
+## The silent-skip trap (found before it bit us)
+
+Plugin discovery parses a `-v<version>` suffix from the filename
+(`internal/pluginhost/platform.go:62-96`). Selection then drops any file whose
+parsed version differs from a configured `store.version`:
+
+```go
+if desiredVersion := desired[id]; desiredVersion != "" && file.Version != desiredVersion {
+    continue
+}
+```
+(`platform.go:166-174`)
+
+There is no error and no log line. A baked *unversioned* `cpa-quota-api-extension.so`
+against the live `store.version: 0.6.0` would have been skipped, and the deploy
+would have looked entirely successful while loading nothing.
+
+**Consequence for the image:** baked plugins use unversioned filenames, and their
+config entries must carry **no `store:` block**. The upside is that an image bump
+then requires no config change at all — which matters, because the live config
+sits on a PVC seeded with `cp -n` and cannot be updated from Git.
+
+`cpa-opencode-go-auth` already has this shape live: bare `enabled: true`, no
+`store:` block.
+
+## Image contents
+
+Three plugins, all unversioned, verified present in the published image:
+
+| File | Source |
+|---|---|
+| `cpa-quota-api-extension.so` | built here |
+| `cpa-opencode-go-auth.so` | built here |
+| `cliproxyapi-copilot.so` | third-party release v0.3.3, pinned by SHA-256 `6ac5c58f…` |
+
+The third-party plugin is included because it shares the same ephemerality and
+its absence is the actual live outage.
