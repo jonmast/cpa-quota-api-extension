@@ -1,8 +1,8 @@
 dist/
 prototypes/
-data/*.db
-data/*.db-wal
-data/*.db-shm
+**/data/*.db
+**/data/*.db-wal
+**/data/*.db-shm
 *.so
 *.dylib
 *.dll
