@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -11,10 +12,16 @@ import (
 const (
 	defaultDatabasePath   = "./data/cpa-session-cache.db"
 	defaultStreamStateTTL = 10 * time.Minute
+	// Retention defaults are sized for weeks of single-user traffic: 30 days
+	// of rows, capped at 50k requests.
+	defaultRetention = 30 * 24 * time.Hour
+	defaultMaxRows   = 50000
 )
 
 type pluginConfig struct {
 	DatabasePath   string
+	Retention      time.Duration
+	MaxRows        int
 	StreamStateTTL time.Duration
 }
 
@@ -23,34 +30,51 @@ type lifecycleRequest struct {
 }
 
 func defaultConfig() pluginConfig {
-	return pluginConfig{DatabasePath: defaultDatabasePath, StreamStateTTL: defaultStreamStateTTL}
+	return pluginConfig{
+		DatabasePath:   defaultDatabasePath,
+		Retention:      defaultRetention,
+		MaxRows:        defaultMaxRows,
+		StreamStateTTL: defaultStreamStateTTL,
+	}
 }
 
-func decodeLifecycleConfig(raw []byte) (pluginConfig, error) {
+// decodeLifecycleConfig applies the plugin config block at register and
+// reconfigure. Invalid values fall back to the documented defaults per field
+// instead of failing registration: a passive observer must load even when its
+// config block is malformed.
+func decodeLifecycleConfig(raw []byte) pluginConfig {
 	cfg := defaultConfig()
 	if len(raw) == 0 {
-		return cfg, nil
+		return cfg
 	}
 	var req lifecycleRequest
 	if err := json.Unmarshal(raw, &req); err != nil {
-		return cfg, fmt.Errorf("decode lifecycle request: %w", err)
+		return cfg
 	}
 	text, err := lifecycleConfigText(req.ConfigYAML)
 	if err != nil {
-		return cfg, err
+		return cfg
 	}
 	values := yamlScalars(text)
 	if value := values["database-path"]; value != "" {
 		cfg.DatabasePath = value
 	}
-	if value := values["stream-state-ttl"]; value != "" {
-		parsed, parseErr := time.ParseDuration(value)
-		if parseErr != nil || parsed <= 0 || parsed > 24*time.Hour {
-			return cfg, fmt.Errorf("stream-state-ttl must be a positive Go duration up to 24h")
+	if value := values["retention"]; value != "" {
+		if parsed, parseErr := time.ParseDuration(value); parseErr == nil && parsed > 0 && parsed <= 365*24*time.Hour {
+			cfg.Retention = parsed
 		}
-		cfg.StreamStateTTL = parsed
 	}
-	return cfg, nil
+	if value := values["max-rows"]; value != "" {
+		if parsed, parseErr := strconv.Atoi(value); parseErr == nil && parsed > 0 && parsed <= 1000000 {
+			cfg.MaxRows = parsed
+		}
+	}
+	if value := values["stream-state-ttl"]; value != "" {
+		if parsed, parseErr := time.ParseDuration(value); parseErr == nil && parsed > 0 && parsed <= 24*time.Hour {
+			cfg.StreamStateTTL = parsed
+		}
+	}
+	return cfg
 }
 
 func lifecycleConfigText(raw json.RawMessage) (string, error) {

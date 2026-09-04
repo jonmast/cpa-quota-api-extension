@@ -20,6 +20,8 @@ func pluginRegistration() registration {
 			GitHubRepository: "https://github.com/jonmast/cpa-quota-api-extension",
 			ConfigFields: []configField{
 				{Name: "database-path", Type: "string", Description: "SQLite session capture database path. Default: " + defaultDatabasePath + "."},
+				{Name: "retention", Type: "string", Description: "Request row retention duration; older rows are pruned. Default: 720h (30 days)."},
+				{Name: "max-rows", Type: "integer", Description: "Maximum retained request rows (1 through 1000000), oldest evicted first. Default: 50000."},
 				{Name: "stream-state-ttl", Type: "string", Description: "Eviction TTL for in-memory state of abandoned streams, measured since the last chunk. Default: 10m."},
 			},
 		},
