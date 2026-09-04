@@ -15,12 +15,13 @@ type runtimeState struct {
 	cfg      pluginConfig
 	store    *captureStore
 	storeErr string
+	streams  map[string]*streamState
 }
 
 var activeRuntime = newRuntime()
 
 func newRuntime() *runtimeState {
-	return &runtimeState{cfg: defaultConfig()}
+	return &runtimeState{cfg: defaultConfig(), streams: map[string]*streamState{}}
 }
 
 func (r *runtimeState) applyConfig(cfg pluginConfig) {
@@ -32,6 +33,7 @@ func (r *runtimeState) applyConfig(cfg pluginConfig) {
 	}
 	r.cfg = cfg
 	r.storeErr = ""
+	r.streams = map[string]*streamState{}
 	store, err := openCaptureStore(cfg.DatabasePath)
 	if err != nil {
 		r.storeErr = err.Error()
@@ -47,6 +49,7 @@ func (r *runtimeState) shutdown() {
 		r.store.close()
 		r.store = nil
 	}
+	r.streams = map[string]*streamState{}
 }
 
 // handleResponseIntercept records Anthropic-format non-streaming responses and
@@ -63,15 +66,103 @@ func (r *runtimeState) handleResponseIntercept(raw []byte) ([]byte, error) {
 	return okEnvelope(interceptResponse{})
 }
 
-// handleStreamChunk is pass-through only in this slice; streaming capture
-// (header-init session extraction, message_start/delta/stop accumulation)
-// arrives in a later slice.
+// handleStreamChunk captures streamed Anthropic responses and always answers
+// with an empty intercept response, so SSE chunks pass through unmodified.
+// The header-init chunk (ChunkIndex == -1) opens per-request state; payload
+// chunks accumulate usage from message_start/message_delta events; the row
+// commits on message_stop. Every dispatch first evicts state whose last chunk
+// is older than the stream-state TTL.
 func (r *runtimeState) handleStreamChunk(raw []byte) ([]byte, error) {
 	var req streamChunkInterceptRequest
 	if err := json.Unmarshal(raw, &req); err != nil {
 		return nil, fmt.Errorf("decode stream chunk request: %w", err)
 	}
+	now := time.Now().UTC()
+	var committed []requestRow
+	r.mu.Lock()
+	r.evictStaleStreamsLocked(now)
+	if req.ChunkIndex == -1 {
+		r.streams[req.RequestID] = &streamState{
+			sessionID: extractSessionID(req.OriginalRequest, req.RequestHeaders),
+			model:     req.Model,
+			lastChunk: now,
+		}
+	} else {
+		committed = r.applyStreamEventsLocked(req, now)
+	}
+	store := r.store
+	r.mu.Unlock()
+	if store != nil {
+		for _, row := range committed {
+			// Storage failures are swallowed: the observer must never disturb
+			// live traffic.
+			_ = store.insertRow(row)
+		}
+	}
 	return okEnvelope(interceptResponse{})
+}
+
+// applyStreamEventsLocked folds one payload chunk's SSE events into the
+// request's stream state and returns any rows that became complete. A chunk
+// for an unknown request (header-init missed or state already evicted) opens a
+// fallback state in the "unknown" session bucket; without a message_start it
+// can never commit a row, so unparseable streams age out silently.
+func (r *runtimeState) applyStreamEventsLocked(req streamChunkInterceptRequest, now time.Time) []requestRow {
+	state := r.streams[req.RequestID]
+	if state == nil {
+		state = &streamState{sessionID: "unknown", model: req.Model}
+		r.streams[req.RequestID] = state
+	}
+	state.lastChunk = now
+	var committed []requestRow
+	for _, ev := range parseSSEData(req.Body) {
+		switch ev.Type {
+		case "message_start":
+			state.sawStart = true
+			state.usage.InputTokens = ev.Message.Usage.InputTokens
+			state.usage.CacheReadInputTokens = ev.Message.Usage.CacheReadInputTokens
+			state.usage.CacheCreationInputTokens = ev.Message.Usage.CacheCreationInputTokens
+			if ev.Message.Model != "" {
+				state.model = ev.Message.Model
+			}
+		case "message_delta":
+			if ev.Usage.OutputTokens > 0 {
+				state.usage.OutputTokens = ev.Usage.OutputTokens
+			}
+		case "message_stop":
+			if state.sawStart {
+				committed = append(committed, requestRow{
+					At:            now,
+					RequestID:     req.RequestID,
+					SessionID:     state.sessionID,
+					Model:         state.model,
+					Stream:        true,
+					StatusCode:    200,
+					Input:         state.usage.InputTokens,
+					Output:        state.usage.OutputTokens,
+					CacheRead:     state.usage.CacheReadInputTokens,
+					CacheCreation: state.usage.CacheCreationInputTokens,
+				})
+			}
+			delete(r.streams, req.RequestID)
+		}
+	}
+	return committed
+}
+
+// evictStaleStreamsLocked drops stream state whose last chunk is older than
+// the configured TTL, covering client disconnects that never deliver
+// message_stop.
+func (r *runtimeState) evictStaleStreamsLocked(now time.Time) {
+	ttl := r.cfg.StreamStateTTL
+	if ttl <= 0 {
+		ttl = defaultStreamStateTTL
+	}
+	for id, state := range r.streams {
+		if now.Sub(state.lastChunk) > ttl {
+			delete(r.streams, id)
+		}
+	}
 }
 
 // anthropicRow parses the response body as an Anthropic message. Only bodies
