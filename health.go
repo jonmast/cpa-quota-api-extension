@@ -11,16 +11,30 @@ import (
 
 type usageRecord struct {
 	Provider        string
+	Model           string
 	AuthIndex       string
 	RequestedAt     time.Time
 	Latency         time.Duration
 	Failed          bool
 	Failure         usageFailure
+	Detail          usageDetail
 	ResponseHeaders http.Header
 }
 type usageFailure struct {
 	StatusCode int
 	Body       string
+}
+
+// usageDetail mirrors the host's per-request token breakdown
+// (upstream sdk/pluginapi.UsageDetail).
+type usageDetail struct {
+	InputTokens         int64
+	OutputTokens        int64
+	ReasoningTokens     int64
+	CachedTokens        int64
+	CacheReadTokens     int64
+	CacheCreationTokens int64
+	TotalTokens         int64
 }
 
 type healthEvent struct {
@@ -32,6 +46,13 @@ type healthEvent struct {
 	LatencyMS    int64     `json:"latency_ms,omitempty"`
 	RetryAt      time.Time `json:"retry_at,omitempty"`
 	Success      bool      `json:"success"`
+	// Model and token counts feed the usage profile only (ADR 0004). They are
+	// excluded from JSON because containsSensitiveJSON treats any "token"
+	// substring as a credential leak; these are aggregate counters, never
+	// secrets, and nothing serializes them.
+	Model          string `json:"-"`
+	UncachedTokens int64  `json:"-"`
+	TokensSeen     bool   `json:"-"`
 }
 
 type healthObservation struct {
@@ -114,6 +135,13 @@ func sanitizeUsageRecord(record usageRecord, receivedAt time.Time) (healthEvent,
 		at = receivedAt.UTC()
 	}
 	event := healthEvent{Provider: strings.ToLower(strings.TrimSpace(record.Provider)), AuthIndex: strings.TrimSpace(record.AuthIndex), At: at, Success: !record.Failed, LatencyMS: record.Latency.Milliseconds()}
+	event.Model = strings.TrimSpace(record.Model)
+	// The uncached token sum (input + output + reasoning; cache counters
+	// excluded) is the profile's shape signal — ADR 0004. TokensSeen records
+	// whether the event carried any token detail at all; the gap between it and
+	// records_seen is the token-coverage input (CONTEXT.md: token coverage).
+	event.TokensSeen = usageDetailPresent(record.Detail)
+	event.UncachedTokens = positiveTokens(record.Detail.InputTokens) + positiveTokens(record.Detail.OutputTokens) + positiveTokens(record.Detail.ReasoningTokens)
 	if !record.Failed {
 		return event, true
 	}
@@ -144,6 +172,19 @@ func sanitizeUsageRecord(record usageRecord, receivedAt time.Time) (healthEvent,
 		event.RetryAt = retryAt.UTC()
 	}
 	return event, true
+}
+
+func usageDetailPresent(detail usageDetail) bool {
+	return detail.InputTokens > 0 || detail.OutputTokens > 0 || detail.ReasoningTokens > 0 ||
+		detail.CachedTokens > 0 || detail.CacheReadTokens > 0 || detail.CacheCreationTokens > 0 ||
+		detail.TotalTokens > 0
+}
+
+func positiveTokens(n int64) int64 {
+	if n > 0 {
+		return n
+	}
+	return 0
 }
 
 func containsSensitiveJSON(raw []byte) bool {

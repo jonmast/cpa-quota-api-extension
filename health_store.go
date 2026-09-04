@@ -13,7 +13,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-const healthSchemaVersion = 4
+const healthSchemaVersion = 5
 
 type healthStore struct{ db *sql.DB }
 type healthIncident struct {
@@ -134,7 +134,14 @@ func (s *healthStore) migrate() error {
 		by_provider_json TEXT NOT NULL DEFAULT '{}'
 	);
 	CREATE INDEX IF NOT EXISTS health_history_recorded ON health_history(recorded_at DESC);
-	CREATE TABLE IF NOT EXISTS alert_state (name TEXT PRIMARY KEY, value TEXT NOT NULL);`); err != nil {
+	CREATE TABLE IF NOT EXISTS alert_state (name TEXT PRIMARY KEY, value TEXT NOT NULL);
+	CREATE TABLE IF NOT EXISTS usage_buckets (
+		provider TEXT NOT NULL, auth_index TEXT NOT NULL, day_type TEXT NOT NULL, hour INTEGER NOT NULL,
+		date TEXT NOT NULL, token_sum INTEGER NOT NULL DEFAULT 0, records_seen INTEGER NOT NULL DEFAULT 0,
+		records_tokened INTEGER NOT NULL DEFAULT 0,
+		PRIMARY KEY(provider, auth_index, day_type, hour, date)
+	);
+	CREATE INDEX IF NOT EXISTS usage_buckets_date ON usage_buckets(date);`); err != nil {
 		return err
 	}
 	// v0.2.0 databases may have the original observations table without these columns.
@@ -192,6 +199,23 @@ func (s *healthStore) record(event healthEvent, cfg pluginConfig) error {
 	at := timeText(event.At)
 	if !event.Success {
 		if _, err = tx.Exec(`INSERT INTO failure_events(auth_index,provider,occurred_at,status_code,failure_class) VALUES(?,?,?,?,?)`, event.AuthIndex, event.Provider, at, event.StatusCode, event.FailureClass); err != nil {
+			return err
+		}
+	}
+	// Successful requests feed the usage profile at write time, bucketed in the
+	// profile timezone. Failures represent no consumption and would depress the
+	// token-coverage denominator, so they never touch bucket rows. Events
+	// without token detail still increment records_seen — that asymmetry is the
+	// token-coverage input (CONTEXT.md: token coverage).
+	if event.Success {
+		key := bucketFor(event.At, cfg.profileLocation())
+		tokened := 0
+		if event.TokensSeen {
+			tokened = 1
+		}
+		if _, err = tx.Exec(`INSERT INTO usage_buckets(provider,auth_index,day_type,hour,date,token_sum,records_seen,records_tokened) VALUES(?,?,?,?,?,?,1,?)
+			ON CONFLICT(provider,auth_index,day_type,hour,date) DO UPDATE SET token_sum=usage_buckets.token_sum+excluded.token_sum,records_seen=usage_buckets.records_seen+1,records_tokened=usage_buckets.records_tokened+excluded.records_tokened`,
+			event.Provider, event.AuthIndex, key.DayType, key.Hour, key.Date, event.UncachedTokens, tokened); err != nil {
 			return err
 		}
 	}
@@ -258,7 +282,13 @@ func (s *healthStore) prune(cfg pluginConfig) error {
 	if _, err := s.db.Exec(`DELETE FROM incidents WHERE id NOT IN (SELECT id FROM incidents WHERE COALESCE(resolved_at,opened_at)>=? ORDER BY id DESC LIMIT ?)`, timeText(time.Now().Add(-cfg.IncidentRetention)), cfg.IncidentMaxRows); err != nil {
 		return err
 	}
-	_, err := s.db.Exec(`DELETE FROM health_history WHERE id NOT IN (SELECT id FROM health_history WHERE recorded_at>=? ORDER BY id DESC LIMIT ?)`, timeText(time.Now().Add(-cfg.HistoryRetention)), cfg.HistoryMaxRows)
+	if _, err := s.db.Exec(`DELETE FROM health_history WHERE id NOT IN (SELECT id FROM health_history WHERE recorded_at>=? ORDER BY id DESC LIMIT ?)`, timeText(time.Now().Add(-cfg.HistoryRetention)), cfg.HistoryMaxRows); err != nil {
+		return err
+	}
+	// Day-grain profile rows age out at ~30 days (ADR 0004). Dates are
+	// YYYY-MM-DD in the profile timezone, so lexical comparison is ordering.
+	profileCutoff := time.Now().In(cfg.profileLocation()).AddDate(0, 0, -profileRetentionDays).Format(bucketDateLayout)
+	_, err := s.db.Exec(`DELETE FROM usage_buckets WHERE date<?`, profileCutoff)
 	return err
 }
 

@@ -27,6 +27,7 @@ func pluginRegistration() registration {
 				{Name: "history-retention", Type: "string", Description: "History retention (minimum 1h)."},
 				{Name: "history-max-rows", Type: "integer", Description: "Maximum history rows (100 through 1000000)."},
 				{Name: "usage-queue-size", Type: "integer", Description: "Usage event queue size (64 through 65536)."},
+				{Name: "profile-timezone", Type: "string", Description: "IANA timezone for usage-profile buckets. Default: server local."},
 				{Name: "webhook-url", Type: "string", Description: "Optional HTTP(S) pool-health alert webhook URL."},
 				{Name: "webhook-timeout", Type: "string", Description: "Webhook delivery timeout."},
 				{Name: "alert-lost-threshold", Type: "integer", Description: "Lost accounts before alert; zero disables."},

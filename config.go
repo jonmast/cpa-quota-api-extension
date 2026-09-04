@@ -80,6 +80,14 @@ func decodeLifecycleConfig(raw []byte) (pluginConfig, error) {
 	if value := values["database-path"]; value != "" {
 		cfg.DatabasePath = value
 	}
+	if value := values["profile-timezone"]; value != "" {
+		location, err := time.LoadLocation(value)
+		if err != nil {
+			return cfg, fmt.Errorf("profile-timezone must be an IANA timezone name")
+		}
+		cfg.ProfileTimezone = value
+		cfg.profileLoc = location
+	}
 	if err := applyHealthDuration(values, "health-refresh-interval", &cfg.HealthRefreshInterval, 10*time.Second, 24*time.Hour); err != nil {
 		return cfg, err
 	}

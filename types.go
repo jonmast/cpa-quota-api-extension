@@ -40,6 +40,20 @@ type pluginConfig struct {
 	LostThreshold         int
 	DegradedPoolThreshold int
 	AlertCooldown         time.Duration
+	// ProfileTimezone is the configured IANA zone for usage-profile bucket
+	// assignment; empty means server local (CONTEXT.md: profile timezone).
+	// profileLoc is the resolved location, populated at config decode time.
+	ProfileTimezone string
+	profileLoc      *time.Location
+}
+
+// profileLocation returns the timezone in which profile buckets and day types
+// are assigned: the configured IANA zone, defaulting to server local.
+func (c pluginConfig) profileLocation() *time.Location {
+	if c.profileLoc != nil {
+		return c.profileLoc
+	}
+	return time.Local
 }
 
 type envelope struct {
