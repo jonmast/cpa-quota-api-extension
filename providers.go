@@ -218,14 +218,23 @@ func fetchClaudeQuota(ctx context.Context, host hostClient, cfg pluginConfig, en
 	if err := json.Unmarshal(resp.Body, &payload); err != nil {
 		return withParseError(result, "invalid Claude quota response")
 	}
-	// Top-level five_hour and seven_day windows.
-	for _, item := range []struct{ id, key string }{{"five_hour", "five_hour"}, {"seven_day", "seven_day"}} {
+	// Top-level five_hour and seven_day windows. Upstream reports a reset
+	// instant but no duration; the durations are known facts of the window
+	// kind, so they are filled here (fixed-cycle windows need a derivable
+	// start — see CONTEXT.md and ADR 0004).
+	for _, item := range []struct {
+		id, key string
+		seconds int64
+	}{
+		{"five_hour", "five_hour", 5 * 60 * 60},
+		{"seven_day", "seven_day", 7 * 24 * 60 * 60},
+	} {
 		window, _ := payload[item.key].(map[string]any)
 		if window == nil {
 			continue
 		}
 		used := numberPtr(window["utilization"])
-		result.Windows = append(result.Windows, quotaWindow{ID: item.id, UsedPercent: used, RemainingPercent: inversePercent(used), ResetAt: timePtr(window["resets_at"])})
+		result.Windows = append(result.Windows, quotaWindow{ID: item.id, UsedPercent: used, RemainingPercent: inversePercent(used), ResetAt: timePtr(window["resets_at"]), WindowSeconds: item.seconds})
 	}
 	// Scoped weekly model limits from limits[].
 	limits, _ := payload["limits"].([]any)
@@ -283,6 +292,11 @@ func fetchCopilotQuota(ctx context.Context, host hostClient, cfg pluginConfig, e
 	if resetAt == nil {
 		resetAt = timePtr(payload["quota_reset_date"])
 	}
+	// Copilot quotas cycle monthly: the current cycle starts one calendar
+	// month before the reported reset date. The API carries no duration, so
+	// it is derived here from the reset instant; without a reset date the
+	// cycle start is not derivable and window_seconds stays unset.
+	windowSeconds := monthlyWindowSeconds(resetAt)
 	snapshots, _ := payload["quota_snapshots"].(map[string]any)
 	for _, item := range []struct{ id, key string }{{"premium_interactions", "premium_interactions"}, {"chat", "chat"}, {"completions", "completions"}} {
 		window, _ := snapshots[item.key].(map[string]any)
@@ -297,11 +311,24 @@ func fetchCopilotQuota(ctx context.Context, host hostClient, cfg pluginConfig, e
 			RemainingPercent: remaining,
 			UsedPercent:      inversePercent(remaining),
 			ResetAt:          resetAt,
+			WindowSeconds:    windowSeconds,
 		})
 	}
 	result.FetchedAt = time.Now().UTC()
 	result.Status = statusFromWindows(result.Windows)
 	return result
+}
+
+// monthlyWindowSeconds derives a monthly cycle duration from its reset
+// instant: the cycle starts one calendar month before the reset, so the
+// duration varies with the month length (28-31 days). Returns 0 when the
+// reset instant is unknown.
+func monthlyWindowSeconds(resetAt *time.Time) int64 {
+	if resetAt == nil {
+		return 0
+	}
+	start := resetAt.AddDate(0, -1, 0)
+	return int64(resetAt.Sub(start) / time.Second)
 }
 
 // fetchOpenCodeGoQuota reads the OpenCode Go usage endpoint with the API key

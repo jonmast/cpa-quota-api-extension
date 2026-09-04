@@ -32,6 +32,32 @@ func TestParseAntigravityModels(t *testing.T) {
 	}
 }
 
+func TestMonthlyWindowSeconds(t *testing.T) {
+	cases := []struct {
+		name  string
+		reset *time.Time
+		want  int64
+	}{
+		{"nil reset", nil, 0},
+		{"31-day month", timeRef(2026, 9, 1), 31 * 24 * 60 * 60},
+		{"30-day month", timeRef(2026, 10, 1), 30 * 24 * 60 * 60},
+		{"february non-leap", timeRef(2026, 3, 1), 28 * 24 * 60 * 60},
+		{"february leap", timeRef(2028, 3, 1), 29 * 24 * 60 * 60},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := monthlyWindowSeconds(tc.reset); got != tc.want {
+				t.Fatalf("monthlyWindowSeconds(%v) = %d, want %d", tc.reset, got, tc.want)
+			}
+		})
+	}
+}
+
+func timeRef(year int, month time.Month, day int) *time.Time {
+	t := time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
+	return &t
+}
+
 func TestAccountIDFromJWT(t *testing.T) {
 	payload, _ := json.Marshal(map[string]any{"https://api.openai.com/auth": map[string]any{"chatgpt_account_id": "acct-1"}})
 	token := "x." + base64.RawURLEncoding.EncodeToString(payload) + ".x"

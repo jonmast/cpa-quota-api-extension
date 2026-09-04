@@ -73,12 +73,47 @@ func TestClaudeQuotaReachesFetcherThroughManagementHandler(t *testing.T) {
 	if fiveHour.ResetAt == nil || !fiveHour.ResetAt.Equal(time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC)) {
 		t.Fatalf("five_hour reset = %#v", fiveHour.ResetAt)
 	}
+	if fiveHour.WindowSeconds != 18000 {
+		t.Fatalf("five_hour window_seconds = %d, want 18000", fiveHour.WindowSeconds)
+	}
 	sevenDay := windowByID(t, account, "seven_day")
 	if sevenDay.RemainingPercent == nil || *sevenDay.RemainingPercent != 90 {
 		t.Fatalf("seven_day = %#v", sevenDay)
 	}
+	if sevenDay.WindowSeconds != 604800 {
+		t.Fatalf("seven_day window_seconds = %d, want 604800", sevenDay.WindowSeconds)
+	}
 	if host.requestCount(claudeQuotaURL) != 1 {
 		t.Fatalf("claude requests = %d", host.requestCount(claudeQuotaURL))
+	}
+}
+
+func TestClaudeWindowSecondsFilledWhenResetTimestampOmitted(t *testing.T) {
+	// The window durations are known facts of the window kind, so they are
+	// filled even when upstream omits the reset instant.
+	host := newFakeHost().
+		withEntry(hostAuthFileEntry{AuthIndex: "claude-1", Name: "claude.json", Provider: "claude"}).
+		withCredential("claude-1", `{"access_token":"sk-ant-oat-test"}`).
+		withJSON(claudeQuotaURL, `{
+			"five_hour": {"utilization": 40},
+			"seven_day": {"utilization": 10}
+		}`)
+
+	account := accountByProvider(t, quotaSnapshotJSON(t, host, nil), "claude")
+
+	fiveHour := windowByID(t, account, "five_hour")
+	if fiveHour.WindowSeconds != 18000 {
+		t.Fatalf("five_hour window_seconds = %d, want 18000", fiveHour.WindowSeconds)
+	}
+	if fiveHour.ResetAt != nil {
+		t.Fatalf("five_hour reset = %#v, want nil", fiveHour.ResetAt)
+	}
+	sevenDay := windowByID(t, account, "seven_day")
+	if sevenDay.WindowSeconds != 604800 {
+		t.Fatalf("seven_day window_seconds = %d, want 604800", sevenDay.WindowSeconds)
+	}
+	if sevenDay.ResetAt != nil {
+		t.Fatalf("seven_day reset = %#v, want nil", sevenDay.ResetAt)
 	}
 }
 
@@ -231,6 +266,13 @@ func TestClaudeExtraUsageReportedAgainstMonthlyLimit(t *testing.T) {
 	}
 	if account.ExtraMonthlyLimit == nil || *account.ExtraMonthlyLimit != 5000 {
 		t.Fatalf("ExtraMonthlyLimit = %#v", account.ExtraMonthlyLimit)
+	}
+	// The extra credit pool has no fixed cycle: no duration is invented for it.
+	if extra.WindowSeconds != 0 {
+		t.Fatalf("extra window_seconds = %d, want 0", extra.WindowSeconds)
+	}
+	if extra.ResetAt != nil {
+		t.Fatalf("extra reset = %#v, want nil", extra.ResetAt)
 	}
 }
 
@@ -547,16 +589,54 @@ func TestCopilotQuotaReachesFetcherThroughManagementHandler(t *testing.T) {
 	if premium.ResetAt == nil || !premium.ResetAt.Equal(time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)) {
 		t.Fatalf("premium_interactions reset = %#v", premium.ResetAt)
 	}
+	// The cycle starts one calendar month before the reset: 2026-08-01 to
+	// 2026-09-01 spans 31 days.
+	wantSeconds := int64(31 * 24 * 60 * 60)
+	if premium.WindowSeconds != wantSeconds {
+		t.Fatalf("premium_interactions window_seconds = %d, want %d", premium.WindowSeconds, wantSeconds)
+	}
 	chat := windowByID(t, account, "chat")
 	if chat.RemainingPercent == nil || *chat.RemainingPercent != 40.0 {
 		t.Fatalf("chat remaining = %#v", chat.RemainingPercent)
+	}
+	if chat.WindowSeconds != wantSeconds {
+		t.Fatalf("chat window_seconds = %d, want %d", chat.WindowSeconds, wantSeconds)
 	}
 	completions := windowByID(t, account, "completions")
 	if completions.RemainingPercent == nil || *completions.RemainingPercent != 50.0 {
 		t.Fatalf("completions remaining = %#v", completions.RemainingPercent)
 	}
+	if completions.WindowSeconds != wantSeconds {
+		t.Fatalf("completions window_seconds = %d, want %d", completions.WindowSeconds, wantSeconds)
+	}
 	if host.requestCount(copilotQuotaURL) != 1 {
 		t.Fatalf("copilot requests = %d", host.requestCount(copilotQuotaURL))
+	}
+}
+
+func TestCopilotWindowSecondsOmittedWhenResetDateMissing(t *testing.T) {
+	// Without a reset date the monthly cycle start is not derivable, so no
+	// duration is invented.
+	host := newFakeHost().
+		withEntry(hostAuthFileEntry{AuthIndex: "copilot-1", Name: "copilot.json", Provider: "copilot"}).
+		withCredential("copilot-1", `{"access_token":"gho_test_token"}`).
+		withJSON(copilotQuotaURL, `{
+			"quota_snapshots": {
+				"premium_interactions": {"entitlement": 1000, "remaining": 500, "percent_remaining": 50.0, "quota_reset_at": 0}
+			}
+		}`)
+
+	account := accountByProvider(t, quotaSnapshotJSON(t, host, nil), "copilot")
+
+	premium := windowByID(t, account, "premium_interactions")
+	if premium.RemainingPercent == nil || *premium.RemainingPercent != 50.0 {
+		t.Fatalf("premium_interactions remaining = %#v", premium.RemainingPercent)
+	}
+	if premium.ResetAt != nil {
+		t.Fatalf("premium_interactions reset = %#v, want nil", premium.ResetAt)
+	}
+	if premium.WindowSeconds != 0 {
+		t.Fatalf("premium_interactions window_seconds = %d, want 0", premium.WindowSeconds)
 	}
 }
 
