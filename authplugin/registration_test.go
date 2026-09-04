@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -144,9 +145,10 @@ func TestStaticModelsAreEmptyUntilSomethingIsDiscovered(t *testing.T) {
 	}
 }
 
-// The registered provider and the emitted provider_key attribute must be the
-// same string, otherwise model lookup misses and the auth is unregistered.
-func TestRegisteredProviderMatchesEmittedProviderKeyAttribute(t *testing.T) {
+// The registered model provider, the emitted auth provider and the executor
+// identifier must all be the same string. Model lookup, auth registration and
+// executor routing are all keyed on it (conductor.executorKeyFromAuth).
+func TestRegisteredProviderMatchesEmittedAuthProvider(t *testing.T) {
 	resetConfig(t)
 	resetDiscovery(t)
 	withHost(t, okHost(t))
@@ -165,11 +167,39 @@ func TestRegisteredProviderMatchesEmittedProviderKeyAttribute(t *testing.T) {
 		RawJSON:  []byte(`{"type":"opencode-go","api_key":"sk-test"}`),
 	}, &parsed)
 
-	if got := parsed.Auth.Attributes["provider_key"]; got != reg.Provider {
-		t.Fatalf("provider_key=%q registered provider=%q", got, reg.Provider)
+	if parsed.Auth.Provider != reg.Provider {
+		t.Fatalf("auth provider=%q registered provider=%q", parsed.Auth.Provider, reg.Provider)
+	}
+
+	var identifier identifierResponse
+	callMethod(t, methodExecutorIdentifier, nil, &identifier)
+	if identifier.Identifier != reg.Provider {
+		t.Fatalf("executor identifier=%q registered provider=%q", identifier.Identifier, reg.Provider)
 	}
 	if len(reg.Models) == 0 {
-		t.Fatal("compat auth emitted with no models registered for its provider key")
+		t.Fatal("auth emitted with no models registered for its provider key")
+	}
+}
+
+// Any compat attribute would route execution back to the built-in
+// openai-compatibility executor, which drops the client headers this plugin
+// exists to forward.
+func TestAuthParseEmitsNoCompatibilityAttributes(t *testing.T) {
+	resetConfig(t)
+	var parsed authParseResponse
+	callMethod(t, methodAuthParse, authParseRequest{
+		Provider: authType,
+		FileName: "opencode-go.json",
+		RawJSON:  []byte(`{"type":"opencode-go","api_key":"sk-test"}`),
+	}, &parsed)
+
+	for _, key := range []string{"compat_name", "provider_key"} {
+		if value, ok := parsed.Auth.Attributes[key]; ok {
+			t.Fatalf("attribute %s=%q must not be emitted", key, value)
+		}
+	}
+	if strings.EqualFold(parsed.Auth.Provider, "openai-compatibility") {
+		t.Fatalf("auth provider=%q routes to the built-in compat executor", parsed.Auth.Provider)
 	}
 }
 
@@ -184,7 +214,7 @@ func TestStaticModelsMirrorRegisteredModels(t *testing.T) {
 	}
 }
 
-func TestAuthParseEmitsCompatibilityAuthAttributes(t *testing.T) {
+func TestAuthParseEmitsExecutorAuthAttributes(t *testing.T) {
 	resetConfig(t)
 	var parsed authParseResponse
 	callMethod(t, methodAuthParse, authParseRequest{
@@ -204,10 +234,9 @@ func TestAuthParseEmitsCompatibilityAuthAttributes(t *testing.T) {
 		t.Fatalf("auth=%#v", parsed.Auth)
 	}
 	want := map[string]string{
-		"base_url":     defaultBaseURL,
-		"api_key":      "sk-test",
-		"compat_name":  compatName,
-		"provider_key": providerKey,
+		"base_url":  defaultBaseURL,
+		"api_key":   "sk-test",
+		"auth_kind": "apikey",
 	}
 	for key, value := range want {
 		if got := parsed.Auth.Attributes[key]; got != value {

@@ -47,8 +47,15 @@ verify-upstream:
 	grep -q 'MethodHostHTTPDo' $(CPA_UPSTREAM)/internal/pluginhost/host_callbacks.go
 	grep -q 'type AuthParseResponse struct' $(CPA_UPSTREAM)/sdk/pluginapi/types.go
 	grep -q 'type ModelRegistrationResponse struct' $(CPA_UPSTREAM)/sdk/pluginapi/types.go
-	grep -q 'compat_name' $(CPA_UPSTREAM)/sdk/cliproxy/service.go
-	grep -q 'provider_key' $(CPA_UPSTREAM)/sdk/cliproxy/service.go
+	grep -q 'MethodExecutorIdentifier' $(CPA_UPSTREAM)/sdk/pluginabi/types.go
+	grep -q 'MethodExecutorExecuteStream' $(CPA_UPSTREAM)/sdk/pluginabi/types.go
+	grep -q 'MethodHostHTTPDoStream' $(CPA_UPSTREAM)/sdk/pluginabi/types.go
+	grep -q 'MethodHostHTTPStreamRead' $(CPA_UPSTREAM)/sdk/pluginabi/types.go
+	grep -q 'MethodHostStreamEmit' $(CPA_UPSTREAM)/sdk/pluginabi/types.go
+	grep -q 'Executor  *bool  *`json:"executor"`' $(CPA_UPSTREAM)/internal/pluginhost/rpc_schema.go
+	grep -q 'ExecutorInputFormats' $(CPA_UPSTREAM)/internal/pluginhost/rpc_schema.go
+	grep -q 'stream_id' $(CPA_UPSTREAM)/internal/pluginhost/rpc_schema.go
+	grep -q 'func executorKeyFromAuth' $(CPA_UPSTREAM)/sdk/cliproxy/auth/conductor.go
 
 clean:
 	rm -rf $(DIST_DIR)

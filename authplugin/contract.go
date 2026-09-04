@@ -29,10 +29,20 @@ const (
 	methodAuthIdentifier = "auth.identifier"
 	methodAuthParse      = "auth.parse"
 
+	methodExecutorIdentifier    = "executor.identifier"
+	methodExecutorExecute       = "executor.execute"
+	methodExecutorExecuteStream = "executor.execute_stream"
+	methodExecutorCountTokens   = "executor.count_tokens"
+
 	// Host callbacks. These are dispatched by Host.callFromPlugin with no
 	// capability gate, so any loaded plugin may call them.
-	methodHostHTTPDo = "host.http.do"
-	methodHostLog    = "host.log"
+	methodHostHTTPDo          = "host.http.do"
+	methodHostHTTPDoStream    = "host.http.do_stream"
+	methodHostHTTPStreamRead  = "host.http.stream_read"
+	methodHostHTTPStreamClose = "host.http.stream_close"
+	methodHostStreamEmit      = "host.stream.emit"
+	methodHostStreamClose     = "host.stream.close"
+	methodHostLog             = "host.log"
 )
 
 type envelope struct {
@@ -69,10 +79,17 @@ type configField struct {
 	Description string `json:"Description"`
 }
 
+// registrationCapabilities mirrors internal/pluginhost.rpcCapabilities. Unlike
+// the pluginapi types, that struct carries json tags, so these keys are
+// snake_case.
 type registrationCapabilities struct {
-	ModelRegistrar bool `json:"model_registrar"`
-	ModelProvider  bool `json:"model_provider"`
-	AuthProvider   bool `json:"auth_provider"`
+	ModelRegistrar        bool     `json:"model_registrar"`
+	ModelProvider         bool     `json:"model_provider"`
+	AuthProvider          bool     `json:"auth_provider"`
+	Executor              bool     `json:"executor"`
+	ExecutorModelScope    string   `json:"executor_model_scope,omitempty"`
+	ExecutorInputFormats  []string `json:"executor_input_formats,omitempty"`
+	ExecutorOutputFormats []string `json:"executor_output_formats,omitempty"`
 }
 
 type identifierResponse struct {
@@ -155,6 +172,81 @@ type hostHTTPResponse struct {
 	StatusCode int                 `json:"StatusCode"`
 	Headers    map[string][]string `json:"Headers,omitempty"`
 	Body       []byte              `json:"Body,omitempty"`
+}
+
+// executorRequest mirrors pluginapi.ExecutorRequest (PascalCase, untagged
+// upstream) wrapped by internal/pluginhost.rpcExecutorRequest, which adds the
+// two tagged snake_case fields below.
+//
+// Headers carries the *client's* request headers. It is the only place the
+// inbound x-opencode-session header is visible to us, and forwarding it to
+// oc-go is the reason this plugin owns an executor at all instead of relying on
+// the built-in openai-compatibility executor, which drops these headers.
+type executorRequest struct {
+	AuthID          string              `json:"AuthID"`
+	AuthProvider    string              `json:"AuthProvider"`
+	Model           string              `json:"Model"`
+	Format          string              `json:"Format"`
+	Stream          bool                `json:"Stream"`
+	Alt             string              `json:"Alt"`
+	Headers         map[string][]string `json:"Headers,omitempty"`
+	Query           map[string][]string `json:"Query,omitempty"`
+	OriginalRequest []byte              `json:"OriginalRequest,omitempty"`
+	SourceFormat    string              `json:"SourceFormat"`
+	Payload         []byte              `json:"Payload,omitempty"`
+	Metadata        map[string]any      `json:"Metadata,omitempty"`
+	StorageJSON     []byte              `json:"StorageJSON,omitempty"`
+	AuthMetadata    map[string]any      `json:"AuthMetadata,omitempty"`
+	AuthAttributes  map[string]string   `json:"AuthAttributes,omitempty"`
+
+	StreamID       string `json:"stream_id,omitempty"`
+	HostCallbackID string `json:"host_callback_id,omitempty"`
+}
+
+// executorResponse mirrors pluginapi.ExecutorResponse (untagged upstream).
+type executorResponse struct {
+	Payload  []byte              `json:"Payload,omitempty"`
+	Headers  map[string][]string `json:"Headers,omitempty"`
+	Metadata map[string]any      `json:"Metadata,omitempty"`
+}
+
+// executorStreamResponse mirrors internal/pluginhost.rpcExecutorStreamResponse,
+// which is tagged, hence lowercase keys. Chunks is left empty: this plugin
+// streams asynchronously through host.stream.emit.
+type executorStreamResponse struct {
+	Headers map[string][]string `json:"headers,omitempty"`
+}
+
+// hostHTTPStreamResponse mirrors internal/pluginhost.rpcHostHTTPStreamResponse.
+type hostHTTPStreamResponse struct {
+	StatusCode int                 `json:"status_code"`
+	Headers    map[string][]string `json:"headers,omitempty"`
+	StreamID   string              `json:"stream_id,omitempty"`
+}
+
+type hostHTTPStreamReadRequest struct {
+	StreamID string `json:"stream_id"`
+}
+
+type hostHTTPStreamReadResponse struct {
+	Payload []byte `json:"payload,omitempty"`
+	Error   string `json:"error,omitempty"`
+	Done    bool   `json:"done,omitempty"`
+}
+
+type hostHTTPStreamCloseRequest struct {
+	StreamID string `json:"stream_id"`
+}
+
+type hostStreamEmitRequest struct {
+	StreamID string `json:"stream_id"`
+	Payload  []byte `json:"payload,omitempty"`
+	Error    string `json:"error,omitempty"`
+}
+
+type hostStreamCloseRequest struct {
+	StreamID string `json:"stream_id"`
+	Error    string `json:"error,omitempty"`
 }
 
 type hostLogRequest struct {

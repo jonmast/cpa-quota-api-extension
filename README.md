@@ -536,9 +536,10 @@ Individual targets are `make build-quota` and `make build-auth`.
 ### OpenCode Go auth plugin
 
 `cpa-opencode-go-auth.so` turns `auths/opencode-go.json` into a real auth so the
-credential is readable through `host.auth.get` and routable by the built-in
-OpenAI-compatibility executor. See
-[ADR-0001](docs/adr/0001-opencode-go-auth-parser-plugin.md).
+credential is readable through `host.auth.get`, and executes OpenCode Go traffic
+through its own provider executor. See
+[ADR-0001](docs/adr/0001-opencode-go-auth-parser-plugin.md) and
+[ADR-0003](docs/adr/0003-plugin-owned-executor-for-session-header.md).
 
 Credential file:
 
@@ -551,14 +552,31 @@ Credential file:
 ```
 
 `base_url` is optional and defaults to the plugin's `base-url` config value. The
-emitted auth carries `base_url`, `api_key`, `compat_name`, and `provider_key`
-attributes; the host stamps `path` itself.
+emitted auth carries `base_url`, `api_key`, and `auth_kind` attributes; the host
+stamps `path` itself. Any `header:<name>` attribute is sent as a static header
+on every upstream call.
 
-Because `compat_name` marks the auth as a compatibility auth, the plugin also
-registers OpenCode Go's model list for the `opencode-go` provider key. Without
-registered models the host silently unregisters the auth — it routes but is
-never selected. Override the list with the `models` config field (comma
-separated) if OpenCode Go's catalog changes.
+The auth's provider is `opencode-go`, which is also the model registration
+provider key and the plugin executor's identifier. All three must agree: the
+host routes an execution by the auth's provider, looks up models under the same
+key, and unregisters an auth that has no registered models. Override the model
+list with the `models` config field (comma separated) if OpenCode Go's catalog
+changes.
+
+The plugin executes chat completions itself rather than delegating to the
+built-in OpenAI-compatibility executor, because oc-go requires the client's
+`x-opencode-session` header and the built-in executor forwards no client request
+headers. The forwarded header allow-list is `forwardedClientHeaders` in
+`authplugin/executor.go`.
+
+Owning the executor means OpenCode Go traffic emits no CPA usage records. Account
+**health** still classifies these accounts from host auth state — `disabled`,
+`unavailable`, `rate_limited` and `healthy` all work — but the `degraded` tier,
+incident rows and latency figures are unavailable for them. OpenCode Go **quota**
+is polled separately from oc-go and is unaffected. Token counting is not
+implemented: it is only reachable from CPA's Claude and Gemini routes, which
+clients here do not use. See
+[ADR-0003](docs/adr/0003-plugin-owned-executor-for-session-header.md).
 
 ## Known limitations
 

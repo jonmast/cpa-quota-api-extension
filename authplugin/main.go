@@ -18,16 +18,22 @@ const (
 	// call to the auth provider whose identifier matches.
 	authType = "opencode-go"
 
-	// providerKey is the key under which models are registered and the value of
-	// the provider_key attribute. It must match the model registration provider,
-	// otherwise the compat auth is silently UnregisterClient'd.
+	// providerKey is the key under which models are registered, the identifier
+	// this plugin's executor registers under, and the provider stamped on the
+	// emitted auth. All three must agree: the conductor routes an execution by
+	// executorKeyFromAuth(auth) (sdk/cliproxy/auth/conductor.go:5961), which for
+	// an auth carrying no compat_name attribute is just the lowercased provider.
 	providerKey = "opencode-go"
 
-	// compatName marks the emitted auth as an OpenAI-compatibility auth.
-	compatName = "opencode-go"
-
-	// authProvider is the CPA provider that owns the built-in compatibility executor.
-	authProvider = "openai-compatibility"
+	// authProvider is the provider stamped on the emitted auth.
+	//
+	// This is deliberately *not* "openai-compatibility". A compat auth is routed
+	// to the built-in compatibility executor, which drops the client's request
+	// headers and so cannot forward x-opencode-session to oc-go. Owning the
+	// provider key routes execution to this plugin's executor instead. For the
+	// same reason the auth carries no compat_name/provider_key attributes:
+	// either one would send executorKeyFromAuth back down the compat path.
+	authProvider = providerKey
 
 	// defaultBaseURL is the OpenCode *Go* endpoint. The plain /zen/v1 host is a
 	// different product and does not serve this credential's models.
@@ -82,6 +88,14 @@ func pluginRegistration() registration {
 			ModelRegistrar: true,
 			ModelProvider:  true,
 			AuthProvider:   true,
+			// The executor is bound to the provider key from model.register
+			// (internal/pluginhost/adapters.go:965), which is providerKey, and
+			// reached because parseAuth emits an auth whose Provider is that
+			// same key (see the authProvider comment).
+			Executor:              true,
+			ExecutorModelScope:    "static",
+			ExecutorInputFormats:  []string{"openai"},
+			ExecutorOutputFormats: []string{"openai"},
 		},
 	}
 }
@@ -227,11 +241,9 @@ func parseAuth(req authParseRequest) (authParseResponse, error) {
 			StorageJSON: append([]byte(nil), req.RawJSON...),
 			Metadata:    metadataMap,
 			Attributes: map[string]string{
-				"base_url":     cred.baseURL(cfg.BaseURL),
-				"api_key":      apiKey,
-				"compat_name":  compatName,
-				"provider_key": providerKey,
-				"auth_kind":    "apikey",
+				"base_url":  cred.baseURL(cfg.BaseURL),
+				"api_key":   apiKey,
+				"auth_kind": "apikey",
 			},
 		},
 	}, nil
@@ -278,11 +290,56 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 			return errorEnvelope("auth_parse_failed", err.Error(), false, 0), nil
 		}
 		return okEnvelope(resp)
+	case methodExecutorIdentifier:
+		return okEnvelope(identifierResponse{Identifier: providerKey})
+	case methodExecutorExecute:
+		req, err := decodeExecutorRequest(request)
+		if err != nil {
+			return nil, err
+		}
+		resp, execErr := executeUpstream(activeHost, req)
+		if execErr != nil {
+			return errorEnvelope(execErr.Code, execErr.Message, execErr.Retryable, execErr.HTTPStatus), nil
+		}
+		return okEnvelope(resp)
+	case methodExecutorExecuteStream:
+		req, err := decodeExecutorRequest(request)
+		if err != nil {
+			return nil, err
+		}
+		resp, execErr := executeUpstreamStream(activeHost, req)
+		if execErr != nil {
+			return errorEnvelope(execErr.Code, execErr.Message, execErr.Retryable, execErr.HTTPStatus), nil
+		}
+		return okEnvelope(resp)
+	case methodExecutorCountTokens:
+		// Unreachable in this deployment, and deliberately not implemented.
+		//
+		// Counting never involves an upstream call -- oc-go exposes no counting
+		// endpoint, and the built-in compatibility executor tokenizes locally
+		// with tiktoken (openai_compat_executor.go:579). Reproducing that costs
+		// ~21MB of vocabulary tables linked into this .so, and only CPA's Claude
+		// (/v1/messages/count_tokens) and Gemini (:countTokens) routes ever
+		// invoke this method. Clients here speak OpenAI chat completions, which
+		// has no counting route, so nothing can reach it. See ADR-0003 for the
+		// recipe if a Claude- or Gemini-protocol client ever appears.
+		return errorEnvelope("unsupported", "opencode-go does not support token counting", false, 0), nil
 	case methodPluginShutdown:
 		return okEnvelope(struct{}{})
 	default:
 		return errorEnvelope("unknown_method", "unknown method: "+method, false, 0), nil
 	}
+}
+
+func decodeExecutorRequest(raw []byte) (executorRequest, error) {
+	var req executorRequest
+	if len(raw) == 0 {
+		return req, fmt.Errorf("executor request is empty")
+	}
+	if err := json.Unmarshal(raw, &req); err != nil {
+		return executorRequest{}, fmt.Errorf("decode executor request: %w", err)
+	}
+	return req, nil
 }
 
 func decodeLifecycleConfig(raw []byte) (authPluginConfig, error) {

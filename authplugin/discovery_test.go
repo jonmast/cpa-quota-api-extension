@@ -57,6 +57,10 @@ func (f *fakeHost) doHTTP(request hostHTTPRequest) (hostHTTPResponse, error) {
 	return f.response, f.err
 }
 
+func (f *fakeHost) invoke(method string, _ any) (json.RawMessage, error) {
+	return nil, fmt.Errorf("unexpected host callback %s", method)
+}
+
 func (f *fakeHost) log(level, message string, _ map[string]any) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

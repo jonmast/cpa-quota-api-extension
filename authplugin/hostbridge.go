@@ -54,6 +54,10 @@ import (
 // interface so tests can substitute a fake without crossing the cgo boundary.
 type hostClient interface {
 	doHTTP(hostHTTPRequest) (hostHTTPResponse, error)
+	// invoke issues an arbitrary host callback. The executor needs the stream
+	// callbacks (host.http.do_stream, host.stream.emit, ...), which all share
+	// this one envelope shape, so they are not each given a method here.
+	invoke(method string, payload any) (json.RawMessage, error)
 	log(level, message string, fields map[string]any)
 }
 
@@ -89,6 +93,10 @@ func (cgoHostClient) doHTTP(request hostHTTPRequest) (hostHTTPResponse, error) {
 		return hostHTTPResponse{}, fmt.Errorf("decode host HTTP response: %w", err)
 	}
 	return response, nil
+}
+
+func (cgoHostClient) invoke(method string, payload any) (json.RawMessage, error) {
+	return callHost(method, payload)
 }
 
 func (cgoHostClient) log(level, message string, fields map[string]any) {
