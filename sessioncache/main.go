@@ -34,6 +34,12 @@ func managementRegistration() managementRegistrationResponse {
 	return managementRegistrationResponse{
 		Routes: []managementRoute{
 			{Method: http.MethodGet, Path: sessionsRoute, Description: "Returns recent sessions ordered by last activity with request count, last model, and last-seen time."},
+			{Method: http.MethodGet, Path: sessionDetailRoute, Description: "Returns one session's ordered request rows with read-time hit/miss/neutral cache classification. Requires ?session_id=."},
 		},
+		Resources: []resourceRoute{{
+			Path:        panelResourcePath,
+			Menu:        "Session Cache",
+			Description: "Per-session token bar chart with cache-miss highlighting.",
+		}},
 	}
 }

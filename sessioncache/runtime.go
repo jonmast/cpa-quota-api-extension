@@ -124,10 +124,15 @@ func (r *runtimeState) record(row requestRow) {
 }
 
 func (r *runtimeState) handleManagement(req managementRequest) managementResponse {
+	if req.Method == http.MethodGet && req.Path == "/v0/resource/plugins/"+pluginID+panelResourcePath {
+		return panelResponse()
+	}
 	path := strings.TrimPrefix(req.Path, "/v0/management")
 	switch {
 	case req.Method == http.MethodGet && path == sessionsRoute:
 		return r.sessionListResponse(req.Query)
+	case req.Method == http.MethodGet && path == sessionDetailRoute:
+		return r.sessionDetailResponse(req.Query)
 	default:
 		return jsonError(http.StatusNotFound, "not_found", "plugin route not found")
 	}

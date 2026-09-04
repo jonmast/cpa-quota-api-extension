@@ -57,12 +57,30 @@ func TestManagementRegistrationWire(t *testing.T) {
 	if err := json.Unmarshal(env.Result, &reg); err != nil {
 		t.Fatal(err)
 	}
-	if len(reg.Routes) != 1 {
+	if len(reg.Routes) != 2 {
 		t.Fatalf("routes=%#v", reg.Routes)
 	}
-	route := reg.Routes[0]
-	if route.Method != "GET" || route.Path != sessionsRoute || route.Description == "" {
-		t.Fatalf("route=%#v", route)
+	want := map[string]bool{sessionsRoute: false, sessionDetailRoute: false}
+	for _, route := range reg.Routes {
+		if route.Method != "GET" || route.Description == "" {
+			t.Fatalf("route=%#v", route)
+		}
+		if _, ok := want[route.Path]; !ok {
+			t.Fatalf("unexpected route=%#v", route)
+		}
+		want[route.Path] = true
+	}
+	for path, found := range want {
+		if !found {
+			t.Fatalf("missing route %s", path)
+		}
+	}
+	if len(reg.Resources) != 1 {
+		t.Fatalf("resources=%#v", reg.Resources)
+	}
+	resource := reg.Resources[0]
+	if resource.Path != panelResourcePath || resource.Menu != "Session Cache" || resource.Description == "" {
+		t.Fatalf("resource=%#v", resource)
 	}
 }
 
