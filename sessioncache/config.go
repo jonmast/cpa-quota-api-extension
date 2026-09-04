@@ -5,12 +5,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 )
 
-const defaultDatabasePath = "./data/cpa-session-cache.db"
+const (
+	defaultDatabasePath   = "./data/cpa-session-cache.db"
+	defaultStreamStateTTL = 10 * time.Minute
+)
 
 type pluginConfig struct {
-	DatabasePath string
+	DatabasePath   string
+	StreamStateTTL time.Duration
 }
 
 type lifecycleRequest struct {
@@ -18,7 +23,7 @@ type lifecycleRequest struct {
 }
 
 func defaultConfig() pluginConfig {
-	return pluginConfig{DatabasePath: defaultDatabasePath}
+	return pluginConfig{DatabasePath: defaultDatabasePath, StreamStateTTL: defaultStreamStateTTL}
 }
 
 func decodeLifecycleConfig(raw []byte) (pluginConfig, error) {
@@ -37,6 +42,13 @@ func decodeLifecycleConfig(raw []byte) (pluginConfig, error) {
 	values := yamlScalars(text)
 	if value := values["database-path"]; value != "" {
 		cfg.DatabasePath = value
+	}
+	if value := values["stream-state-ttl"]; value != "" {
+		parsed, parseErr := time.ParseDuration(value)
+		if parseErr != nil || parsed <= 0 || parsed > 24*time.Hour {
+			return cfg, fmt.Errorf("stream-state-ttl must be a positive Go duration up to 24h")
+		}
+		cfg.StreamStateTTL = parsed
 	}
 	return cfg, nil
 }

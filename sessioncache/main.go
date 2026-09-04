@@ -20,6 +20,7 @@ func pluginRegistration() registration {
 			GitHubRepository: "https://github.com/jonmast/cpa-quota-api-extension",
 			ConfigFields: []configField{
 				{Name: "database-path", Type: "string", Description: "SQLite session capture database path. Default: " + defaultDatabasePath + "."},
+				{Name: "stream-state-ttl", Type: "string", Description: "Eviction TTL for in-memory state of abandoned streams, measured since the last chunk. Default: 10m."},
 			},
 		},
 		Capabilities: registrationCapabilities{
