@@ -111,7 +111,7 @@ func TestHealthFilterAndOpaqueCursor(t *testing.T) {
 }
 
 func TestConfigRegistrationParity(t *testing.T) {
-	want := []string{"database-path", "health-refresh-interval", "health-history-interval", "failure-window", "degraded-failure-threshold", "incident-retention", "incident-max-rows", "history-retention", "history-max-rows", "usage-queue-size", "webhook-url", "webhook-timeout", "alert-lost-threshold", "alert-degraded-threshold", "alert-cooldown"}
+	want := []string{"database-path", "health-refresh-interval", "health-history-interval", "failure-window", "degraded-failure-threshold", "incident-retention", "incident-max-rows", "history-retention", "history-max-rows", "usage-queue-size", "profile-timezone", "webhook-url", "webhook-timeout", "alert-lost-threshold", "alert-degraded-threshold", "alert-cooldown"}
 	got := map[string]bool{}
 	for _, field := range pluginRegistration().Metadata.ConfigFields {
 		got[field.Name] = true
