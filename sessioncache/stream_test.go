@@ -255,11 +255,11 @@ func TestOrphanPayloadChunksFallBackToUnknownWithoutRow(t *testing.T) {
 	}
 }
 
-func TestStreamStateTTLConfigRejectsInvalidValues(t *testing.T) {
+func TestStreamStateTTLInvalidValuesFallBackWithoutFailingRegistration(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "capture.db")
 	for _, value := range []string{"nope", "-1m", "0s", "25h"} {
-		request, _ := json.Marshal(map[string]any{"config_yaml": "stream-state-ttl: " + value})
-		if _, err := handleMethod(methodPluginRegister, request); err == nil {
-			t.Fatalf("stream-state-ttl %q accepted", value)
-		}
+		// Invalid values degrade to the documented default instead of failing
+		// registration.
+		registerWithYAML(t, "database-path: "+dbPath+"\nstream-state-ttl: "+value)
 	}
 }

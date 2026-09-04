@@ -40,6 +40,9 @@ func (r *runtimeState) applyConfig(cfg pluginConfig) {
 		return
 	}
 	r.store = store
+	// Apply the (possibly tightened) retention settings immediately so a
+	// reconfigure prunes without waiting for the next captured request.
+	_ = store.prune(cfg.Retention, cfg.MaxRows)
 }
 
 func (r *runtimeState) shutdown() {
@@ -90,14 +93,10 @@ func (r *runtimeState) handleStreamChunk(raw []byte) ([]byte, error) {
 	} else {
 		committed = r.applyStreamEventsLocked(req, now)
 	}
-	store := r.store
+	store, cfg := r.store, r.cfg
 	r.mu.Unlock()
-	if store != nil {
-		for _, row := range committed {
-			// Storage failures are swallowed: the observer must never disturb
-			// live traffic.
-			_ = store.insertRow(row)
-		}
+	for _, row := range committed {
+		persistRow(store, cfg, row)
 	}
 	return okEnvelope(interceptResponse{})
 }
@@ -206,12 +205,21 @@ func anthropicRow(req responseInterceptRequest) (requestRow, bool) {
 // must never disturb live traffic.
 func (r *runtimeState) record(row requestRow) {
 	r.mu.Lock()
-	store := r.store
+	store, cfg := r.store, r.cfg
 	r.mu.Unlock()
+	persistRow(store, cfg, row)
+}
+
+// persistRow inserts a row and prunes on the write cadence — the same
+// piggybacked periodic pruning the quota extension uses — enforcing the paired
+// retention duration and max-rows settings, oldest rows evicted first. Errors
+// are swallowed: the observer must never disturb live traffic.
+func persistRow(store *captureStore, cfg pluginConfig, row requestRow) {
 	if store == nil {
 		return
 	}
 	_ = store.insertRow(row)
+	_ = store.prune(cfg.Retention, cfg.MaxRows)
 }
 
 func (r *runtimeState) handleManagement(req managementRequest) managementResponse {

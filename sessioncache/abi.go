@@ -130,11 +130,7 @@ func writeResponse(response *C.cliproxy_buffer, raw []byte) bool {
 func handleMethod(method string, request []byte) ([]byte, error) {
 	switch method {
 	case methodPluginRegister, methodPluginReconfigure:
-		cfg, err := decodeLifecycleConfig(request)
-		if err != nil {
-			return nil, err
-		}
-		activeRuntime.applyConfig(cfg)
+		activeRuntime.applyConfig(decodeLifecycleConfig(request))
 		return okEnvelope(pluginRegistration())
 	case methodManagementRegister:
 		return okEnvelope(managementRegistration())

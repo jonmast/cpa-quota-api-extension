@@ -94,6 +94,18 @@ func (s *captureStore) sessionList(limit int) ([]sessionSummary, error) {
 	return sessions, rows.Err()
 }
 
+// prune enforces the paired retention settings, mirroring the quota
+// extension's convention: keep only the newest maxRows rows that are also
+// younger than the retention duration; everything else (oldest first) is
+// deleted. julianday comparison parses the stored RFC3339 timestamps
+// numerically, so variable-width fractional seconds cannot mis-order.
+func (s *captureStore) prune(retention time.Duration, maxRows int) error {
+	cutoff := time.Now().UTC().Add(-retention).Format(time.RFC3339Nano)
+	_, err := s.db.Exec(`DELETE FROM requests WHERE id NOT IN (
+		SELECT id FROM requests WHERE julianday(at) >= julianday(?) ORDER BY id DESC LIMIT ?)`, cutoff, maxRows)
+	return err
+}
+
 func (s *captureStore) close() {
 	if s != nil && s.db != nil {
 		_ = s.db.Close()
