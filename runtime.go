@@ -139,6 +139,8 @@ func (r *runtimeState) handleManagement(req managementRequest) managementRespons
 		return r.listIncidents(req.Query)
 	case req.Method == http.MethodGet && path == historyRoute:
 		return r.listHistory(req.Query)
+	case req.Method == http.MethodGet && path == profileRoute:
+		return r.profileEndpoint()
 	default:
 		return jsonError(http.StatusNotFound, "not_found", "plugin route not found")
 	}

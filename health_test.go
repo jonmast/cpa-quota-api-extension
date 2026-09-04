@@ -74,7 +74,7 @@ func TestUsageFailureClassification(t *testing.T) {
 
 func TestHealthRoutesAreRegistered(t *testing.T) {
 	routes := managementRegistration().Routes
-	want := map[string]bool{healthRoute: false, incidentsRoute: false, historyRoute: false}
+	want := map[string]bool{healthRoute: false, incidentsRoute: false, historyRoute: false, profileRoute: false}
 	for _, route := range routes {
 		if route.Method == http.MethodGet {
 			if _, ok := want[route.Path]; ok {

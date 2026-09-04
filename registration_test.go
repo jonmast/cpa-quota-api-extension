@@ -42,7 +42,7 @@ func TestRegistrationWire(t *testing.T) {
 	}
 	wantRoutes := map[string]bool{
 		quotaRoute: false, accountRoute: false, statusRoute: false,
-		healthRoute: false, incidentsRoute: false, historyRoute: false,
+		healthRoute: false, incidentsRoute: false, historyRoute: false, profileRoute: false,
 	}
 	if len(reg.Routes) != len(wantRoutes) {
 		t.Fatalf("wire=%s result=%s routes=%#v", raw, env.Result, reg.Routes)

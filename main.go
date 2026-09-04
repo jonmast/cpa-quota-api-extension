@@ -48,6 +48,7 @@ func managementRegistration() managementRegistrationResponse {
 			{Method: http.MethodGet, Path: healthRoute, Description: "Returns account-level pool health and capacity."},
 			{Method: http.MethodGet, Path: incidentsRoute, Description: "Returns sanitized health incidents."},
 			{Method: http.MethodGet, Path: historyRoute, Description: "Returns pool health capacity history."},
+			{Method: http.MethodGet, Path: profileRoute, Description: "Returns per-provider usage profiles rolled up across auth indexes."},
 		},
 		Resources: []resourceRoute{{
 			Path:        panelResourcePath,

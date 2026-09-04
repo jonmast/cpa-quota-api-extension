@@ -18,6 +18,7 @@ const (
 	healthRoute       = "/plugins/cpa-quota-api-extension/v1/health"
 	incidentsRoute    = "/plugins/cpa-quota-api-extension/v1/incidents"
 	historyRoute      = "/plugins/cpa-quota-api-extension/v1/history"
+	profileRoute      = "/plugins/cpa-quota-api-extension/v1/profile"
 )
 
 type pluginConfig struct {
