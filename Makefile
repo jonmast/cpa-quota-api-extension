@@ -1,19 +1,21 @@
 PLUGIN_NAME ?= cpa-quota-api-extension
 AUTH_PLUGIN_NAME ?= cpa-opencode-go-auth
 AUTH_PLUGIN_DIR ?= ./authplugin
+SESSION_PLUGIN_NAME ?= cpa-session-cache
+SESSION_PLUGIN_DIR ?= ./sessioncache
 DIST_DIR ?= dist
 CPA_UPSTREAM ?= upstream/CLIProxyAPI
 CPA_COMPAT_TAG ?= v7.2.61
 
-.PHONY: fmt test build build-quota build-auth verify-upstream clean
+.PHONY: fmt test build build-quota build-auth build-session verify-upstream clean
 
 fmt:
-	gofmt -w *.go $(AUTH_PLUGIN_DIR)/*.go
+	gofmt -w *.go $(AUTH_PLUGIN_DIR)/*.go $(SESSION_PLUGIN_DIR)/*.go
 
 test:
 	go test ./...
 
-build: build-quota build-auth
+build: build-quota build-auth build-session
 
 build-quota:
 	mkdir -p $(DIST_DIR)
@@ -24,6 +26,11 @@ build-auth:
 	mkdir -p $(DIST_DIR)
 	CGO_ENABLED=1 go build -buildmode=c-shared -trimpath -ldflags='-s -w' -o $(DIST_DIR)/$(AUTH_PLUGIN_NAME).so $(AUTH_PLUGIN_DIR)
 	rm -f $(DIST_DIR)/$(AUTH_PLUGIN_NAME).h
+
+build-session:
+	mkdir -p $(DIST_DIR)
+	CGO_ENABLED=1 go build -buildmode=c-shared -trimpath -ldflags='-s -w' -o $(DIST_DIR)/$(SESSION_PLUGIN_NAME).so $(SESSION_PLUGIN_DIR)
+	rm -f $(DIST_DIR)/$(SESSION_PLUGIN_NAME).h
 
 verify-upstream:
 	test -f $(CPA_UPSTREAM)/sdk/pluginabi/types.go
