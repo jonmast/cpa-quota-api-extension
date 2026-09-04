@@ -50,8 +50,12 @@ Success: `200 OK`.
       "credential_state": "active",
       "error": null,
       "windows": [
-        {"id": "five_hour", "used_percent": 30, "remaining_percent": 70, "reset_at": "2026-07-27T12:00:00Z"},
-        {"id": "seven_day", "used_percent": 10, "remaining_percent": 90, "reset_at": "2026-08-01T00:00:00Z"},
+        {"id": "five_hour", "used_percent": 30, "remaining_percent": 70, "reset_at": "2026-07-27T12:00:00Z", "window_seconds": 18000,
+         "projection": {"elapsed_fraction": 0.42, "expected_fraction": 0.55, "projected_used_percent": 54.5, "naive_projected_percent": 71.4,
+                        "projected_exhaustion_at": null, "verdict": "on_track", "confidence": "high", "basis": "profile"}},
+        {"id": "seven_day", "used_percent": 10, "remaining_percent": 90, "reset_at": "2026-08-01T00:00:00Z", "window_seconds": 604800,
+         "projection": {"elapsed_fraction": 0.3, "expected_fraction": 0.3, "projected_used_percent": 33.3, "naive_projected_percent": 33.3,
+                        "projected_exhaustion_at": null, "verdict": "on_track", "confidence": "low", "basis": "uniform"}},
         {"id": "extra",     "used_percent": 10, "remaining_percent": 90}
       ],
       "models": [
@@ -105,6 +109,7 @@ The `providers` object is the primary structured view for thin clients. Each key
 | `credential_state` | `active`, `disabled`, or `unavailable` |
 | `error` | present when `status == "error"` — carries `code`, `message`, and optionally `upstream_status` |
 | `windows` | quota windows with `remaining_percent` and `used_percent` on a 0–100 scale; semantics are identical across all providers so numeric comparison works across `providers` keys |
+| `windows[].projection` | end-of-cycle forecast, present only on fixed-cycle windows with a derivable start (`reset_at` + `window_seconds`); sliding windows (e.g. opencode-go `rolling`) and credit pools (claude `extra`) omit it |
 | `models` | Claude scoped-weekly per-model limits (absent on other providers) |
 | `binding_window` | Claude only: the window the API reports as currently binding |
 | `extra_used_credits` / `extra_monthly_limit` | Claude only: extra-usage credit figures |
@@ -117,6 +122,21 @@ A client computing a tightest-across-all-providers pill iterates `providers`, fi
 A provider with `status == "error"` is still present in the map with its `error` field populated, so a partial failure is visible rather than silent.
 
 `refresh=true` bypasses cache freshness but does not create parallel duplicate refreshes. Concurrent callers during a refresh share a single upstream fetch.
+
+### `projection` object
+
+Additive forecast for fixed-cycle windows (ADR 0004). The usage profile's per-occurrence rates, walked over the cycle's actual calendar hours, replace the naive wall-clock ratio.
+
+| field | description |
+|---|---|
+| `elapsed_fraction` | wall-clock share of the cycle already behind us, 0–1 |
+| `expected_fraction` | share of the cycle's typical consumption the profile says should have occurred by now |
+| `projected_used_percent` | `used_percent / expected_fraction` — the end-of-cycle forecast |
+| `naive_projected_percent` | `used_percent / elapsed_fraction`; kept deliberately so profile-vs-clock divergence stays visible |
+| `projected_exhaustion_at` | instant projected usage crosses 100; `null` when the cycle resets first |
+| `verdict` | `on_track` (< 90), `tight` (90–100), or `will_exhaust` (> 100) |
+| `confidence` | `low` / `medium` / `high`, graded by distinct observed days |
+| `basis` | `profile`, or `uniform` on cold start / failed token-coverage guard — under `uniform` the projection collapses exactly to the naive clock method |
 
 ## Account inventory
 

@@ -158,6 +158,26 @@ type quotaWindow struct {
 	// providers; these are informational only.
 	UsedDollars  *float64 `json:"used_dollars,omitempty"`
 	LimitDollars *float64 `json:"limit_dollars,omitempty"`
+	// Projection is the end-of-cycle forecast for fixed-cycle windows with a
+	// derivable start (ADR 0004). Sliding windows and credit pools omit it.
+	Projection *windowProjection `json:"projection,omitempty"`
+}
+
+// windowProjection forecasts a fixed-cycle window's end-of-cycle usage from
+// the provider-reported level and the usage profile's expected pace
+// (CONTEXT.md: projection). NaiveProjectedPercent is kept deliberately:
+// profile-vs-clock divergence is how the profile's work stays visible.
+type windowProjection struct {
+	ElapsedFraction       float64 `json:"elapsed_fraction"`
+	ExpectedFraction      float64 `json:"expected_fraction"`
+	ProjectedUsedPercent  float64 `json:"projected_used_percent"`
+	NaiveProjectedPercent float64 `json:"naive_projected_percent"`
+	// ProjectedExhaustionAt is null unless projected usage crosses 100 before
+	// the reset instant.
+	ProjectedExhaustionAt *time.Time `json:"projected_exhaustion_at"`
+	Verdict               string     `json:"verdict"`
+	Confidence            string     `json:"confidence"`
+	Basis                 string     `json:"basis"`
 }
 
 type modelQuota struct {
