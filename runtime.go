@@ -215,6 +215,13 @@ func (r *runtimeState) refresh(ctx context.Context, cfg pluginConfig) (quotaResp
 	}
 	wg.Wait()
 
+	// Enrich fixed-cycle windows with usage-profile projections before the
+	// provider rollup so both views carry them (ADR 0004).
+	r.mu.Lock()
+	store := r.healthStore
+	r.mu.Unlock()
+	attachProjections(accounts, store, cfg, time.Now())
+
 	generatedAt := time.Now().UTC()
 	response := quotaResponse{
 		GeneratedAt: generatedAt,
