@@ -77,3 +77,33 @@ func TestPanelDocumentContainsOnlyConstrainedLocalClient(t *testing.T) {
 		}
 	}
 }
+
+func TestPanelQuotaOutlookRendersProjectionsAndHeatmap(t *testing.T) {
+	doc := panelDocument
+	for _, want := range []string{
+		// The tab and its scaffolding.
+		"Quota Outlook", "tab-usage", "usage-root", "usage-refresh",
+		// The outlook client fetches the profile route alongside quotas.
+		`profile:"` + profileRoute + `"`,
+		// Plain-language projection line surfacing verdict, basis, confidence.
+		"projected by reset", "clock alone would say",
+		"on track", "tight", "will exhaust",
+		"projected_used_percent", "naive_projected_percent", "projected_exhaustion_at",
+		// Degraded states are visibly flagged, never hidden.
+		"uniform basis", "low confidence",
+		// Raw-percentages-only rendering guard for windows without projection.
+		"if(window.projection)",
+		// Heatmap: 24x2 grid from bucket weights, hours in the profile timezone.
+		"heatmap", "hm-cell", "day_type", "bucket_scheme", "weight",
+		"weekend_share", "token_coverage", "Hour of day in ",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Fatalf("panel missing %q", want)
+		}
+	}
+	// The heatmap paints intensity with inline style computed from weights —
+	// still no external assets involved.
+	if !strings.Contains(doc, "color-mix(in srgb,var(--accent2) ") {
+		t.Fatal("heatmap cell intensity styling missing")
+	}
+}
