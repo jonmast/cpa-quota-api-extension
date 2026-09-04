@@ -61,7 +61,7 @@ func TestPanelDocumentContainsOnlyConstrainedLocalClient(t *testing.T) {
 	doc := panelDocument
 	for _, want := range []string{
 		"Configuration", "API Explorer", "Documentation",
-		quotaRoute, accountRoute, statusRoute, healthRoute, incidentsRoute, historyRoute,
+		quotaRoute, accountRoute, statusRoute, healthRoute, incidentsRoute, historyRoute, profileRoute,
 		"cli-proxy-auth", "enc::v1::", "PATCH", "/plugins/" + pluginID + "/config",
 		"textContent", "URLSearchParams", "AbortController",
 	} {
