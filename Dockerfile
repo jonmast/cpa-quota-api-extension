@@ -1,4 +1,5 @@
-# Custom CLIProxyAPI image with the quota and auth plugins baked in.
+# Custom CLIProxyAPI image with the quota, auth, and session-cache plugins
+# baked in.
 #
 # Why this exists: CPA loads plugins from /CLIProxyAPI/plugins/linux/amd64/,
 # which in the live deployment is the container's *writable layer*, not
@@ -54,6 +55,7 @@ RUN go mod download
 # separate step.
 COPY *.go ./
 COPY authplugin/ ./authplugin/
+COPY sessioncache/ ./sessioncache/
 
 # CGO_ENABLED=1 is required twice over: buildmode=c-shared needs it, and the
 # go-sqlite3 dependency is cgo-based.
@@ -62,6 +64,8 @@ RUN go build -buildmode=c-shared -trimpath -ldflags='-s -w' \
       -o /out/cpa-quota-api-extension.so . \
  && go build -buildmode=c-shared -trimpath -ldflags='-s -w' \
       -o /out/cpa-opencode-go-auth.so ./authplugin \
+ && go build -buildmode=c-shared -trimpath -ldflags='-s -w' \
+      -o /out/cpa-session-cache.so ./sessioncache \
  && rm -f /out/*.h
 
 # --- runtime stage -----------------------------------------------------------

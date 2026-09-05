@@ -1,0 +1,15 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:best-practices"],
+  "description": "The dependency that matters here is the Dockerfile FROM pin on docker.io/eceasy/cli-proxy-api. Renovate bumping it (tag + digest) is the entry point of the release chain: the PR is built and tested by the image workflow, the merge is auto-tagged by the autotag workflow, the tag publishes to ghcr.io, and k8s-conf's own Renovate then proposes the digest-pinned deploy bump. Go module updates are grouped and non-urgent; the upstream/ submodule is a deliberate compatibility pin (make verify-upstream) and must never be auto-bumped.",
+  "git-submodules": {
+    "enabled": false
+  },
+  "packageRules": [
+    {
+      "description": "Group Go module bumps into one PR; they gate on make test in CI",
+      "matchManagers": ["gomod"],
+      "groupName": "go modules"
+    }
+  ]
+}

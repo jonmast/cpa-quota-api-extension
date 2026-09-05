@@ -1,0 +1,64 @@
+# Closes the Renovate loop for upstream CPA bumps. When a push to main changes
+# the Dockerfile's FROM pin (i.e. a merged Renovate base-image PR), cut the
+# next patch tag and dispatch the image workflow on it.
+#
+# Two deliberate constraints:
+#
+# - The guard is on the FROM line specifically, not the Dockerfile as a whole.
+#   Feature releases (new plugins, build changes) keep their manually chosen
+#   semver tags; only mechanical base bumps auto-release.
+#
+# - The tag is pushed with GITHUB_TOKEN, whose events do NOT trigger other
+#   workflows (GitHub's recursion guard). workflow_dispatch is the documented
+#   exception, so the image build is dispatched explicitly on the tag ref.
+name: autotag
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - Dockerfile
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history: needed to diff against the pre-push parent and to
+          # enumerate existing v* tags for the version bump.
+          fetch-depth: 0
+
+      - name: Detect FROM pin change
+        id: guard
+        run: |
+          if git diff "${{ github.event.before }}" "${{ github.sha }}" -- Dockerfile | grep -E '^[+-]FROM'; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "FROM pin unchanged; not tagging."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Cut next patch tag
+        id: tag
+        if: steps.guard.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          latest="$(git tag -l 'v*' --sort=-v:refname | head -1)"
+          [ -n "$latest" ] || { echo "no existing v* tag; refusing to guess a base version" >&2; exit 1; }
+          IFS=. read -r major minor patch <<<"${latest#v}"
+          next="v${major}.${minor}.$((patch + 1))"
+          git tag "$next" "${{ github.sha }}"
+          git push origin "$next"
+          echo "tag=$next" >> "$GITHUB_OUTPUT"
+
+      - name: Dispatch image build on the tag
+        if: steps.guard.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run image.yaml --repo "${{ github.repository }}" --ref "${{ steps.tag.outputs.tag }}"
