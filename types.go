@@ -9,7 +9,7 @@ import (
 
 const (
 	pluginID      = "cpa-quota-api-extension"
-	pluginVersion = "0.3.0"
+	pluginVersion = "0.6.0"
 
 	panelResourcePath = "/panel"
 	quotaRoute        = "/plugins/cpa-quota-api-extension/v1/quotas"
