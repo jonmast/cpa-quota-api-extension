@@ -5,7 +5,7 @@ SESSION_PLUGIN_NAME ?= cpa-session-cache
 SESSION_PLUGIN_DIR ?= ./sessioncache
 DIST_DIR ?= dist
 CPA_UPSTREAM ?= upstream/CLIProxyAPI
-CPA_COMPAT_TAG ?= v7.2.61
+CPA_COMPAT_TAG ?= v7.2.151
 
 .PHONY: fmt test build build-quota build-auth build-session verify-upstream clean
 
@@ -62,7 +62,7 @@ verify-upstream:
 	grep -q 'Executor  *bool  *`json:"executor"`' $(CPA_UPSTREAM)/internal/pluginhost/rpc_schema.go
 	grep -q 'ExecutorInputFormats' $(CPA_UPSTREAM)/internal/pluginhost/rpc_schema.go
 	grep -q 'stream_id' $(CPA_UPSTREAM)/internal/pluginhost/rpc_schema.go
-	grep -q 'func executorKeyFromAuth' $(CPA_UPSTREAM)/sdk/cliproxy/auth/conductor.go
+	grep -q 'func executorKeyFromAuth' $(CPA_UPSTREAM)/sdk/cliproxy/auth/conductor_execution.go
 
 clean:
 	rm -rf $(DIST_DIR)

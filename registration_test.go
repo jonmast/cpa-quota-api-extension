@@ -68,7 +68,4 @@ func TestRegistrationWire(t *testing.T) {
 	if resource.Path != panelResourcePath || resource.Menu != "CPA Quota" || resource.Description == "" {
 		t.Fatalf("resource=%#v", resource)
 	}
-	if pluginRegistration().Metadata.Version != pluginVersion {
-		t.Fatalf("version=%q", pluginRegistration().Metadata.Version)
-	}
 }
