@@ -1,0 +1,58 @@
+---
+# ABI compat and unit tests, on every change.
+#
+# image.yaml has its own identical verify job gating the image build, but it
+# only triggers on tag pushes and on PRs matching a paths filter. That leaves
+# two holes this workflow closes:
+#
+# - Direct pushes to main run nothing at all. Commit a04a355 bumped the
+#   upstream submodule and CPA_COMPAT_TAG straight to main, so the one change
+#   that most needed verify-upstream is precisely the one that skipped it.
+#
+# - image.yaml's paths filter covers **.go, go.mod, go.sum and Dockerfile, but
+#   not Makefile or upstream/**. A commit that only moves the compat pin --
+#   again, exactly the change verify-upstream exists to check -- matches none
+#   of them.
+#
+# Deliberately no paths filter here. The job is a couple of minutes and the
+# failure mode of missing a run is worse than the failure mode of an extra one.
+name: verify
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+# A force-push or rapid follow-up commit makes older runs irrelevant.
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      # verify-upstream asserts against the pinned submodule, so it must be
+      # checked out. The image build itself does not need it -- the ABI types
+      # are hand-copied into this repo.
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          # verify-upstream resolves the compat tag with
+          # `git rev-list -n 1 <tag>` inside the submodule. The default shallow
+          # clone fetches no tags, so that resolution fails with "unknown
+          # revision". Full history is required for the submodule, which
+          # fetch-depth: 0 propagates to.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # verify-upstream only greps for symbol presence against the pin, so
+      # passing it does not prove compatibility with the deployed CPA version
+      # -- see docs/tracer-bullet-findings.md.
+      - run: make verify-upstream
+      - run: make test

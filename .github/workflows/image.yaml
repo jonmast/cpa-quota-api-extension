@@ -35,7 +35,7 @@ jobs:
         with:
           submodules: true
           # verify-upstream resolves the compat tag with
-          # `git rev-list -n 1 v7.2.61` inside the submodule. The default
+          # `git rev-list -n 1 <CPA_COMPAT_TAG>` inside the submodule. The default
           # shallow clone fetches no tags, so that resolution fails with
           # "unknown revision". Full history is required for the submodule,
           # which fetch-depth: 0 propagates to.
