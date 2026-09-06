@@ -72,7 +72,7 @@ RUN go build -buildmode=c-shared -trimpath -ldflags='-s -w' \
 # Pinned by digest, tracking whatever k8s-conf/apps/cliproxyapi/release.yaml
 # runs. Renovate bumps that repo; this pin must be bumped in step or the image
 # will ship an older CPA than the cluster expects.
-FROM docker.io/eceasy/cli-proxy-api:v7.2.146@sha256:238691ac26ce55e4d1c5219d72e3ad74838f81eda26359912eeb415e2820d163
+FROM docker.io/eceasy/cli-proxy-api:v7.2.151@sha256:9d3a608c20d386f5475a7c2ca01936e6441293168b639948f8ddbf8555ecc2b5
 
 # Plugin discovery scans <plugins.dir>/<goos>/<goarch> first, falling back to
 # <plugins.dir> (internal/pluginhost/platform.go:308-312). plugins.dir is
