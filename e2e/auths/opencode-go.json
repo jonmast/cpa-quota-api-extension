@@ -1,0 +1,6 @@
+{
+  "type": "opencode-go",
+  "api_key": "stub-api-key-not-a-real-credential",
+  "base_url": "http://127.0.0.1:9998/v1",
+  "label": "e2e stub"
+}

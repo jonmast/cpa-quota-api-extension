@@ -40,7 +40,7 @@ func executorCredentials(req executorRequest) (baseURL, apiKey string, err error
 	if apiKey == "" {
 		return "", "", fmt.Errorf("auth %q has no api_key attribute", req.AuthID)
 	}
-	baseURL = strings.TrimSpace(req.AuthAttributes["base_url"])
+	baseURL = strings.TrimSpace(req.AuthAttributes[baseURLAttribute])
 	if baseURL == "" {
 		baseURL = currentConfig().BaseURL
 	}

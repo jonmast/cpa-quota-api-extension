@@ -77,7 +77,7 @@ func TestModelsForAuthAreNonEmptyAndWellFormed(t *testing.T) {
 	var models modelResponse
 	callMethod(t, methodModelForAuth, authModelRequest{
 		AuthID:     "opencode-go",
-		Attributes: map[string]string{"api_key": "sk-test", "base_url": defaultBaseURL},
+		Attributes: map[string]string{"api_key": "sk-test", baseURLAttribute: defaultBaseURL},
 	}, &models)
 
 	if models.Provider != providerKey {
@@ -234,14 +234,65 @@ func TestAuthParseEmitsExecutorAuthAttributes(t *testing.T) {
 		t.Fatalf("auth=%#v", parsed.Auth)
 	}
 	want := map[string]string{
-		"base_url":  defaultBaseURL,
-		"api_key":   "sk-test",
-		"auth_kind": "apikey",
+		baseURLAttribute: defaultBaseURL,
+		"api_key":        "sk-test",
+		"auth_kind":      "apikey",
 	}
 	for key, value := range want {
 		if got := parsed.Auth.Attributes[key]; got != value {
 			t.Fatalf("attribute %s=%q want %q", key, got, value)
 		}
+	}
+}
+
+// TestAuthParseEmitsNoNativeCompatAttributes guards the reason the base URL is
+// carried under a private attribute name. Any of these attributes makes the
+// host register a native OpenAI-compat executor under our provider key
+// (sdk/cliproxy/service_executors.go:91-101), shadowing this plugin's executor
+// and silently dropping x-opencode-session on every request.
+func TestAuthParseEmitsNoNativeCompatAttributes(t *testing.T) {
+	resetConfig(t)
+	var parsed authParseResponse
+	callMethod(t, methodAuthParse, authParseRequest{
+		Provider: authType,
+		FileName: "opencode-go.json",
+		RawJSON:  []byte(`{"type":"opencode-go","api_key":"sk-test","base_url":"https://example.invalid/v1"}`),
+	}, &parsed)
+
+	for _, attribute := range []string{"base_url", "compat_name", "provider_key"} {
+		if got := parsed.Auth.Attributes[attribute]; got != "" {
+			t.Fatalf("auth must not carry the %s attribute, got %q", attribute, got)
+		}
+	}
+	if !strings.EqualFold(parsed.Auth.Provider, providerKey) {
+		t.Fatalf("provider=%q want %q", parsed.Auth.Provider, providerKey)
+	}
+}
+
+// TestAuthParseStampsModelPrefix pins the model prefix, which is what keeps
+// client-visible names like "opencode-go/mimo-v2.5" working once the
+// openai-compatibility config entry that used to supply that prefix is removed.
+func TestAuthParseStampsModelPrefix(t *testing.T) {
+	resetConfig(t)
+
+	var parsed authParseResponse
+	callMethod(t, methodAuthParse, authParseRequest{
+		Provider: authType,
+		FileName: "opencode-go.json",
+		RawJSON:  []byte(`{"type":"opencode-go","api_key":"sk-test"}`),
+	}, &parsed)
+	if parsed.Auth.Prefix != providerKey {
+		t.Fatalf("prefix=%q want %q", parsed.Auth.Prefix, providerKey)
+	}
+
+	var custom authParseResponse
+	callMethod(t, methodAuthParse, authParseRequest{
+		Provider: authType,
+		FileName: "opencode-go.json",
+		RawJSON:  []byte(`{"type":"opencode-go","api_key":"sk-test","prefix":"team-a"}`),
+	}, &custom)
+	if custom.Auth.Prefix != "team-a" {
+		t.Fatalf("prefix=%q want %q", custom.Auth.Prefix, "team-a")
 	}
 }
 
@@ -253,7 +304,7 @@ func TestAuthParseHonoursCredentialBaseURL(t *testing.T) {
 		FileName: "opencode-go.json",
 		RawJSON:  []byte(`{"type":"opencode-go","api_key":"sk-test","base_url":"https://example.invalid/v1"}`),
 	}, &parsed)
-	if got := parsed.Auth.Attributes["base_url"]; got != "https://example.invalid/v1" {
+	if got := parsed.Auth.Attributes[baseURLAttribute]; got != "https://example.invalid/v1" {
 		t.Fatalf("base_url=%q", got)
 	}
 }
@@ -312,7 +363,7 @@ func TestConfigOverridesModelListAndBaseURL(t *testing.T) {
 		FileName: "opencode-go.json",
 		RawJSON:  []byte(`{"type":"opencode-go","api_key":"sk-test"}`),
 	}, &parsed)
-	if got := parsed.Auth.Attributes["base_url"]; got != "https://proxy.invalid/v1" {
+	if got := parsed.Auth.Attributes[baseURLAttribute]; got != "https://proxy.invalid/v1" {
 		t.Fatalf("base_url=%q", got)
 	}
 }

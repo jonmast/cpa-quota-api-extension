@@ -7,13 +7,18 @@ DIST_DIR ?= dist
 CPA_UPSTREAM ?= upstream/CLIProxyAPI
 CPA_COMPAT_TAG ?= v7.2.151
 
-.PHONY: fmt test build build-quota build-auth build-session verify-upstream clean
+.PHONY: fmt test e2e build build-quota build-auth build-session verify-upstream clean
 
 fmt:
 	gofmt -w *.go $(AUTH_PLUGIN_DIR)/*.go $(SESSION_PLUGIN_DIR)/*.go
 
 test:
 	go test ./...
+
+# End-to-end check that x-opencode-session survives client -> host -> plugin ->
+# upstream. Runs the pinned upstream against a stub provider; see e2e/README.md.
+e2e:
+	./e2e/run.sh
 
 build: build-quota build-auth build-session
 

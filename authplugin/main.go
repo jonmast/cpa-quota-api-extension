@@ -38,6 +38,21 @@ const (
 	// defaultBaseURL is the OpenCode *Go* endpoint. The plain /zen/v1 host is a
 	// different product and does not serve this credential's models.
 	defaultBaseURL = "https://opencode.ai/zen/go/v1"
+
+	// baseURLAttribute is deliberately not "base_url".
+	//
+	// The host treats a bare base_url attribute as proof that an auth is meant
+	// for the native OpenAI-compat executor
+	// (sdk/cliproxy/service_executors.go:91-94). That check runs in the default
+	// branch of executor registration (:306-319): when it returns true the host
+	// registers a native compat executor under our provider key instead of
+	// unregistering it in favour of the plugin's, and our executor is shadowed.
+	// The compat executor drops client request headers, so x-opencode-session
+	// never reaches oc-go and every call fails with MissingSessionID.
+	//
+	// Naming the attribute privately keeps per-credential base URLs working
+	// while leaving the host's compat inference untriggered.
+	baseURLAttribute = "oc_base_url"
 )
 
 // authPluginConfig holds the plugin's configuration. Models is empty unless an
@@ -92,8 +107,17 @@ func pluginRegistration() registration {
 			// (internal/pluginhost/adapters.go:965), which is providerKey, and
 			// reached because parseAuth emits an auth whose Provider is that
 			// same key (see the authProvider comment).
-			Executor:              true,
-			ExecutorModelScope:    "static",
+			Executor: true,
+			// "both", not "static". The host only calls model.for_auth for a
+			// plugin whose scope admits auth-bound models
+			// (internal/pluginhost/adapters.go:56-62, reached from
+			// ModelsForAuth at :317). Under "static" that call is skipped
+			// entirely, model.register/model.static have no credential to
+			// discover with, and the provider registers zero models -- so
+			// nothing routes to this executor at all. The models here are
+			// discovered per credential (ADR-0002), which is the auth-bound
+			// path by definition.
+			ExecutorModelScope:    "both",
 			ExecutorInputFormats:  []string{"openai"},
 			ExecutorOutputFormats: []string{"openai"},
 		},
@@ -152,7 +176,7 @@ func modelsForAuth(req authModelRequest) (modelResponse, error) {
 	if apiKey == "" {
 		return modelResponse{}, fmt.Errorf("auth %q has no api_key attribute", req.AuthID)
 	}
-	baseURL := strings.TrimSpace(req.Attributes["base_url"])
+	baseURL := strings.TrimSpace(req.Attributes[baseURLAttribute])
 	if baseURL == "" {
 		baseURL = cfg.BaseURL
 	}
@@ -173,6 +197,7 @@ type opencodeGoCredential struct {
 	Key        string `json:"key"`
 	BaseURL    string `json:"base_url"`
 	BaseURLAlt string `json:"baseURL"`
+	Prefix     string `json:"prefix"`
 	Label      string `json:"label"`
 	Email      string `json:"email"`
 	Disabled   bool   `json:"disabled"`
@@ -194,6 +219,24 @@ func (c opencodeGoCredential) baseURL(fallback string) string {
 		}
 	}
 	return fallback
+}
+
+// modelPrefix namespaces this credential's models, so clients can address
+// "opencode-go/mimo-v2.5" as well as the bare "mimo-v2.5"
+// (sdk/cliproxy/service_models.go:576-616 registers both unless the host's
+// force-model-prefix is on).
+//
+// It defaults to the provider key rather than being left empty because the
+// prefixed names predate this plugin: they came from an openai-compatibility
+// config entry whose prefix was "opencode-go". That entry has to be removed --
+// it makes the host shadow this plugin's executor with the native compat one
+// (see baseURLAttribute) -- and stamping the prefix here keeps the names
+// clients already use working once it is gone.
+func (c opencodeGoCredential) modelPrefix() string {
+	if trimmed := strings.TrimSpace(c.Prefix); trimmed != "" {
+		return trimmed
+	}
+	return providerKey
 }
 
 // parseAuth converts an OpenCode Go credential file into a compatibility auth.
@@ -237,13 +280,14 @@ func parseAuth(req authParseRequest) (authParseResponse, error) {
 			ID:          authType,
 			FileName:    fileName,
 			Label:       label,
+			Prefix:      cred.modelPrefix(),
 			Disabled:    cred.Disabled,
 			StorageJSON: append([]byte(nil), req.RawJSON...),
 			Metadata:    metadataMap,
 			Attributes: map[string]string{
-				"base_url":  cred.baseURL(cfg.BaseURL),
-				"api_key":   apiKey,
-				"auth_kind": "apikey",
+				baseURLAttribute: cred.baseURL(cfg.BaseURL),
+				"api_key":        apiKey,
+				"auth_kind":      "apikey",
 			},
 		},
 	}, nil

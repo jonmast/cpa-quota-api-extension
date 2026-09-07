@@ -115,7 +115,7 @@ func baseExecutorRequest() executorRequest {
 		AuthProvider:   providerKey,
 		Model:          "claude-sonnet-4",
 		Payload:        []byte(`{"model":"claude-sonnet-4","messages":[]}`),
-		AuthAttributes: map[string]string{"api_key": "sk-test", "base_url": "https://example.invalid/v1"},
+		AuthAttributes: map[string]string{"api_key": "sk-test", baseURLAttribute: "https://example.invalid/v1"},
 		Headers: map[string][]string{
 			"X-Opencode-Session": {"ses_abc123"},
 			"Authorization":      {"Bearer client-token"},
@@ -317,7 +317,7 @@ func TestStreamPropagatesMidStreamError(t *testing.T) {
 func TestExecuteRejectsAuthWithoutAPIKey(t *testing.T) {
 	host := newExecutorHost()
 	req := baseExecutorRequest()
-	req.AuthAttributes = map[string]string{"base_url": "https://example.invalid/v1"}
+	req.AuthAttributes = map[string]string{baseURLAttribute: "https://example.invalid/v1"}
 
 	_, execErr := executeUpstream(host, req)
 	if execErr == nil || execErr.HTTPStatus != 401 {

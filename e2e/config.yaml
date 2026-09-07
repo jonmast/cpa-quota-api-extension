@@ -1,0 +1,23 @@
+# Config for the opencode-go session-header end-to-end harness.
+#
+# Paths are relative because run.sh copies this file into the work directory
+# and starts the proxy with that directory as its working directory.
+#
+# Note there is deliberately no openai-compatibility entry for opencode-go. The
+# upstream comment on the plugins block warns that "if the same provider is
+# configured as OpenAI-compatible, the native executor wins" -- which is exactly
+# the failure mode this harness has to be able to observe rather than cause.
+host: "127.0.0.1"
+port: 8398
+auth-dir: "./auths"
+debug: true
+
+api-keys:
+  - "e2e-test-key"
+
+plugins:
+  enabled: true
+  dir: "./plugins"
+  configs:
+    cpa-opencode-go-auth:
+      enabled: true
