@@ -121,6 +121,51 @@ func withStreamFlag(payload []byte, stream bool) []byte {
 	return encoded
 }
 
+// withBareModel strips the auth's model prefix from the payload's model field.
+//
+// Models are registered under both "foo" and "<prefix>/foo"
+// (sdk/cliproxy/service_models.go:600-614), and the host resolves whichever the
+// client asked for to the prefixed canonical ID before handing us the payload.
+// oc-go has never heard of the prefix -- it is a local routing namespace -- so
+// sending it through unmodified earns "Model opencode-go/foo is not supported".
+func withBareModel(payload []byte, prefix string) []byte {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" || len(bytes.TrimSpace(payload)) == 0 {
+		return payload
+	}
+	var body map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &body); err != nil {
+		return payload
+	}
+	raw, ok := body["model"]
+	if !ok {
+		return payload
+	}
+	var model string
+	if err := json.Unmarshal(raw, &model); err != nil {
+		return payload
+	}
+	bare, found := strings.CutPrefix(model, prefix+"/")
+	if !found || strings.TrimSpace(bare) == "" {
+		return payload
+	}
+	encoded, err := json.Marshal(bare)
+	if err != nil {
+		return payload
+	}
+	body["model"] = encoded
+	rebuilt, err := json.Marshal(body)
+	if err != nil {
+		return payload
+	}
+	return rebuilt
+}
+
+// upstreamBody prepares the payload oc-go actually receives.
+func upstreamBody(req executorRequest, stream bool) []byte {
+	return withBareModel(withStreamFlag(req.Payload, stream), req.AuthAttributes[modelPrefixAttribute])
+}
+
 // executeUpstream runs the non-streaming chat completion.
 func executeUpstream(host hostClient, req executorRequest) (executorResponse, *envelopeError) {
 	if host == nil {
@@ -135,7 +180,7 @@ func executeUpstream(host hostClient, req executorRequest) (executorResponse, *e
 		Method:         http.MethodPost,
 		URL:            chatCompletionsEndpoint(baseURL),
 		Headers:        upstreamHeaders(req, apiKey, false),
-		Body:           withStreamFlag(req.Payload, false),
+		Body:           upstreamBody(req, false),
 	})
 	if err != nil {
 		return executorResponse{}, &envelopeError{Code: "executor_error", Message: err.Error(), Retryable: true}
@@ -181,7 +226,7 @@ func executeUpstreamStream(host hostClient, req executorRequest) (executorStream
 		Method:         http.MethodPost,
 		URL:            chatCompletionsEndpoint(baseURL),
 		Headers:        upstreamHeaders(req, apiKey, true),
-		Body:           withStreamFlag(req.Payload, true),
+		Body:           upstreamBody(req, true),
 	})
 	if err != nil {
 		return executorStreamResponse{}, &envelopeError{Code: "executor_error", Message: err.Error(), Retryable: true}

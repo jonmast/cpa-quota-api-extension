@@ -53,6 +53,14 @@ const (
 	// Naming the attribute privately keeps per-credential base URLs working
 	// while leaving the host's compat inference untriggered.
 	baseURLAttribute = "oc_base_url"
+
+	// modelPrefixAttribute carries the auth's model prefix through to the
+	// executor. The host resolves a client's model name to the registered
+	// canonical ID, which for a prefixed auth is "opencode-go/foo" -- and that
+	// is what arrives in the executor payload. oc-go only knows the bare name,
+	// so the executor has to strip this prefix back off before calling
+	// upstream. AuthAttributes is the only channel the executor has for it.
+	modelPrefixAttribute = "oc_model_prefix"
 )
 
 // authPluginConfig holds the plugin's configuration. Models is empty unless an
@@ -285,9 +293,10 @@ func parseAuth(req authParseRequest) (authParseResponse, error) {
 			StorageJSON: append([]byte(nil), req.RawJSON...),
 			Metadata:    metadataMap,
 			Attributes: map[string]string{
-				baseURLAttribute: cred.baseURL(cfg.BaseURL),
-				"api_key":        apiKey,
-				"auth_kind":      "apikey",
+				baseURLAttribute:     cred.baseURL(cfg.BaseURL),
+				modelPrefixAttribute: cred.modelPrefix(),
+				"api_key":            apiKey,
+				"auth_kind":          "apikey",
 			},
 		},
 	}, nil

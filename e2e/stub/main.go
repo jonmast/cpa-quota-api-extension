@@ -37,7 +37,7 @@ type recorder struct {
 // record appends one line per inbound request. The format is deliberately flat
 // text rather than JSON: the harness greps it, and a human reading a failure
 // should not need a JSON parser to see what happened.
-func (r *recorder) record(req *http.Request) {
+func (r *recorder) record(req *http.Request, model string) {
 	session := req.Header.Get(sessionHeader)
 	if session == "" {
 		session = "-"
@@ -46,7 +46,10 @@ func (r *recorder) record(req *http.Request) {
 	if agent == "" {
 		agent = "-"
 	}
-	line := fmt.Sprintf("%s %s ua=%s session=%s\n", req.Method, req.URL.Path, agent, session)
+	if model == "" {
+		model = "-"
+	}
+	line := fmt.Sprintf("%s %s ua=%s session=%s model=%s\n", req.Method, req.URL.Path, agent, session, model)
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -77,21 +80,28 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/models", func(w http.ResponseWriter, r *http.Request) {
-		rec.record(r)
+		rec.record(r, "")
 		writeJSON(w, http.StatusOK, map[string]any{
 			"object": "list",
 			"data":   []any{map[string]any{"id": modelID, "object": "model", "owned_by": "opencode-go"}},
 		})
 	})
 	mux.HandleFunc("/v1/chat/completions", func(w http.ResponseWriter, r *http.Request) {
-		rec.record(r)
+		model, stream := decodeBody(r)
+		rec.record(r, model)
 		if r.Header.Get(sessionHeader) == "" {
 			writeJSON(w, http.StatusBadRequest, map[string]any{
 				"error": map[string]any{"message": "MissingSessionID", "type": "invalid_request_error"},
 			})
 			return
 		}
-		if requestedStream(r) {
+		if model != modelID {
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"error": map[string]any{"message": "Model " + model + " is not supported", "type": "ModelError"},
+			})
+			return
+		}
+		if stream {
 			writeStream(w)
 			return
 		}
@@ -106,14 +116,19 @@ func main() {
 	}
 }
 
-func requestedStream(r *http.Request) bool {
+// decodeBody reads the fields the stub cares about. The model matters as much
+// as the session header: the real provider knows nothing of CPA's local
+// "opencode-go/" routing namespace and rejects any model carrying it, so a stub
+// that accepts every name would hide a whole class of prefix bugs.
+func decodeBody(r *http.Request) (model string, stream bool) {
 	var body struct {
-		Stream bool `json:"stream"`
+		Model  string `json:"model"`
+		Stream bool   `json:"stream"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		return strings.Contains(r.Header.Get("Accept"), "text/event-stream")
+		return "", strings.Contains(r.Header.Get("Accept"), "text/event-stream")
 	}
-	return body.Stream
+	return body.Model, body.Stream
 }
 
 func completionBody() map[string]any {
