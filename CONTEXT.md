@@ -20,6 +20,33 @@ A quota window measuring a trailing period with no fixed start (e.g. opencode-go
 `rolling`, gemini per-model buckets). Never projected; reported as raw percentages only.
 _Avoid_: rolling window (ambiguous — opencode-go names a window "rolling")
 
+**Shared window**:
+A quota window that applies to a whole account regardless of model (claude `five_hour`,
+`seven_day`).
+_Avoid_: unified window (Anthropic's header vocabulary, not ours)
+
+**Scoped limit**:
+A quota entry that applies to one model rather than the whole account.
+
+**Binding window**:
+The window an account is currently constrained by — the one that will run out first.
+
+### Sources
+
+**Poll**:
+A request-triggered fetch of a provider's own quota endpoint. The only source that
+yields a complete account snapshot.
+
+**Observation**:
+A quota reading harvested passively from provider response headers on live proxied
+traffic. Covers shared windows only, and amends an account snapshot rather than
+creating one.
+_Avoid_: signal (CPA's own term for the raw headers upstream)
+
+**Provenance**:
+Whether a window's level came from a poll or an observation, and when that source was
+read. Carried per window, since one account's windows can be read at different instants.
+
 ### Usage profile
 
 **Usage profile**:
