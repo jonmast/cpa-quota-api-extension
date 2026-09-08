@@ -70,7 +70,9 @@ func (s *captureStore) insertRow(row requestRow) error {
 // ties).
 func (s *captureStore) sessionList(limit int) ([]sessionSummary, error) {
 	rows, err := s.db.Query(`SELECT o.session_id, COUNT(*) AS request_count, MAX(o.at) AS last_seen,
-		(SELECT i.model FROM requests i WHERE i.session_id = o.session_id ORDER BY i.id DESC LIMIT 1) AS last_model
+		(SELECT i.model FROM requests i WHERE i.session_id = o.session_id ORDER BY i.id DESC LIMIT 1) AS last_model,
+		SUM(o.cache_read_tokens) AS cache_read,
+		SUM(o.input_tokens + o.cache_read_tokens + o.cache_creation_tokens) AS context_tokens
 	FROM requests o
 	GROUP BY o.session_id
 	ORDER BY MAX(o.id) DESC
@@ -83,9 +85,12 @@ func (s *captureStore) sessionList(limit int) ([]sessionSummary, error) {
 	for rows.Next() {
 		var summary sessionSummary
 		var lastSeen string
-		if err := rows.Scan(&summary.SessionID, &summary.RequestCount, &lastSeen, &summary.LastModel); err != nil {
+		var cacheRead, contextTokens int64
+		if err := rows.Scan(&summary.SessionID, &summary.RequestCount, &lastSeen, &summary.LastModel,
+			&cacheRead, &contextTokens); err != nil {
 			return nil, err
 		}
+		summary.CacheHitRate = cacheHitRate(cacheRead, contextTokens)
 		if parsed, parseErr := time.Parse(time.RFC3339Nano, lastSeen); parseErr == nil {
 			summary.LastSeen = parsed
 		}

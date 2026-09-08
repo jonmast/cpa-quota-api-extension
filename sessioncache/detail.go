@@ -32,8 +32,31 @@ type requestDetail struct {
 }
 
 type sessionDetailPayload struct {
-	SessionID string          `json:"session_id"`
-	Requests  []requestDetail `json:"requests"`
+	SessionID    string          `json:"session_id"`
+	CacheHitRate float64         `json:"cache_hit_rate"`
+	Requests     []requestDetail `json:"requests"`
+}
+
+// cacheHitRate is the token-weighted CHR shared by the list and detail
+// endpoints: cache_read tokens over context tokens (input + cache_read +
+// cache_creation). A session with no context tokens has a rate of 0 rather
+// than an undefined ratio.
+func cacheHitRate(cacheRead, contextTokens int64) float64 {
+	if contextTokens <= 0 {
+		return 0
+	}
+	return float64(cacheRead) / float64(contextTokens)
+}
+
+// sessionCacheHitRate aggregates CHR over one session's rows, matching the
+// SQL aggregate the list endpoint computes.
+func sessionCacheHitRate(rows []requestRow) float64 {
+	var cacheRead, contextTokens int64
+	for _, row := range rows {
+		cacheRead += row.CacheRead
+		contextTokens += row.Input + row.CacheRead + row.CacheCreation
+	}
+	return cacheHitRate(cacheRead, contextTokens)
 }
 
 // classifyRows applies the cache-miss rule decided on issue #17, computed at
@@ -122,5 +145,9 @@ func (r *runtimeState) sessionDetailResponse(query url.Values) managementRespons
 	if len(rows) == 0 {
 		return jsonError(http.StatusNotFound, "session_not_found", "no requests recorded for this session")
 	}
-	return jsonResponse(http.StatusOK, sessionDetailPayload{SessionID: sessionID, Requests: classifyRows(rows)})
+	return jsonResponse(http.StatusOK, sessionDetailPayload{
+		SessionID:    sessionID,
+		CacheHitRate: sessionCacheHitRate(rows),
+		Requests:     classifyRows(rows),
+	})
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/url"
 	"path/filepath"
 	"testing"
@@ -131,6 +132,41 @@ func TestSessionDetailJSONContract(t *testing.T) {
 		if _, ok := raw.Requests[0][key]; !ok {
 			t.Fatalf("missing key %q in %s", key, resp.Body)
 		}
+	}
+}
+
+// TestSessionCacheHitRate pins the token-weighted CHR — cache_read tokens over
+// context tokens — and that the list and detail endpoints agree on it.
+func TestSessionCacheHitRate(t *testing.T) {
+	registerWithDB(t, filepath.Join(t.TempDir(), "capture.db"))
+
+	capture(t, "req-1", "sess-chr", 1000, 50, 0, 900) // context 1900, read 0
+	capture(t, "req-2", "sess-chr", 100, 60, 900, 0)  // context 1000, read 900
+
+	// 900 read / 2900 context.
+	want := 900.0 / 2900.0
+	payload := fetchDetail(t, "sess-chr")
+	if math.Abs(payload.CacheHitRate-want) > 1e-9 {
+		t.Fatalf("detail cache_hit_rate=%v want %v", payload.CacheHitRate, want)
+	}
+	list := fetchSessions(t)
+	if len(list.Sessions) != 1 || math.Abs(list.Sessions[0].CacheHitRate-want) > 1e-9 {
+		t.Fatalf("list=%#v want rate %v", list.Sessions, want)
+	}
+}
+
+// A session whose requests carry no context tokens has a defined rate of 0
+// rather than a division by zero.
+func TestCacheHitRateOfEmptyContextIsZero(t *testing.T) {
+	registerWithDB(t, filepath.Join(t.TempDir(), "capture.db"))
+	capture(t, "req-1", "sess-zero", 0, 5, 0, 0)
+
+	if rate := fetchDetail(t, "sess-zero").CacheHitRate; rate != 0 {
+		t.Fatalf("cache_hit_rate=%v want 0", rate)
+	}
+	list := fetchSessions(t)
+	if len(list.Sessions) != 1 || list.Sessions[0].CacheHitRate != 0 {
+		t.Fatalf("list=%#v", list.Sessions)
 	}
 }
 

@@ -156,11 +156,16 @@ type requestRow struct {
 	CacheCreation int64
 }
 
+// sessionSummary carries the per-session aggregates the list endpoint reports.
+// CacheHitRate is the token-weighted cache hit rate (CHR): the session's
+// cache_read tokens over its context tokens (input + cache_read +
+// cache_creation), in [0,1]; it is 0 for a session with no context tokens.
 type sessionSummary struct {
 	SessionID    string    `json:"session_id"`
 	RequestCount int64     `json:"request_count"`
 	LastModel    string    `json:"last_model"`
 	LastSeen     time.Time `json:"last_seen"`
+	CacheHitRate float64   `json:"cache_hit_rate"`
 }
 
 type sessionListResponse struct {
