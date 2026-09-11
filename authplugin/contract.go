@@ -97,16 +97,35 @@ type identifierResponse struct {
 }
 
 type modelInfo struct {
-	ID                         string   `json:"ID"`
-	Object                     string   `json:"Object"`
-	OwnedBy                    string   `json:"OwnedBy"`
-	Type                       string   `json:"Type,omitempty"`
-	DisplayName                string   `json:"DisplayName,omitempty"`
-	Name                       string   `json:"Name,omitempty"`
-	SupportedGenerationMethods []string `json:"SupportedGenerationMethods,omitempty"`
-	ContextLength              int64    `json:"ContextLength,omitempty"`
-	MaxCompletionTokens        int64    `json:"MaxCompletionTokens,omitempty"`
-	UserDefined                bool     `json:"UserDefined,omitempty"`
+	ID                         string           `json:"ID"`
+	Object                     string           `json:"Object"`
+	OwnedBy                    string           `json:"OwnedBy"`
+	Type                       string           `json:"Type,omitempty"`
+	DisplayName                string           `json:"DisplayName,omitempty"`
+	Name                       string           `json:"Name,omitempty"`
+	SupportedGenerationMethods []string         `json:"SupportedGenerationMethods,omitempty"`
+	ContextLength              int64            `json:"ContextLength,omitempty"`
+	MaxCompletionTokens        int64            `json:"MaxCompletionTokens,omitempty"`
+	Thinking                   *thinkingSupport `json:"Thinking,omitempty"`
+	UserDefined                bool             `json:"UserDefined,omitempty"`
+}
+
+// thinkingSupport mirrors pluginapi.ThinkingSupport. Leaving it nil is not
+// neutral: the host copies it straight onto registry.ModelInfo.Thinking
+// (internal/pluginhost/adapters.go:139), and every consumer downstream treats
+// nil as "this model has no reasoning controls" and returns early -- see
+// applyCodexClientThinkingMetadata (internal/client/codex/models/models.go:376).
+//
+// The host does *not* run modelconfig.NormalizeThinkingSupport over what a
+// plugin sends, unlike the config path (sdk/cliproxy/service_models.go:734), so
+// the levels here must already be lowercased and de-duplicated and must already
+// have had "none"/"auto" reflected into ZeroAllowed/DynamicAllowed.
+type thinkingSupport struct {
+	Min            int      `json:"Min,omitempty"`
+	Max            int      `json:"Max,omitempty"`
+	ZeroAllowed    bool     `json:"ZeroAllowed,omitempty"`
+	DynamicAllowed bool     `json:"DynamicAllowed,omitempty"`
+	Levels         []string `json:"Levels,omitempty"`
 }
 
 type modelRegistrationResponse struct {

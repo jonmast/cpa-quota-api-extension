@@ -59,6 +59,9 @@ verify-upstream:
 	grep -q 'MethodHostHTTPDo' $(CPA_UPSTREAM)/internal/pluginhost/host_callbacks.go
 	grep -q 'type AuthParseResponse struct' $(CPA_UPSTREAM)/sdk/pluginapi/types.go
 	grep -q 'type ModelRegistrationResponse struct' $(CPA_UPSTREAM)/sdk/pluginapi/types.go
+	grep -q 'Thinking \*ThinkingSupport' $(CPA_UPSTREAM)/sdk/pluginapi/types.go
+	grep -q 'Levels \[\]string' $(CPA_UPSTREAM)/sdk/pluginapi/types.go
+	grep -q 'func pluginThinkingSupportToRegistryThinkingSupport' $(CPA_UPSTREAM)/internal/pluginhost/adapters.go
 	grep -q 'MethodExecutorIdentifier' $(CPA_UPSTREAM)/sdk/pluginabi/types.go
 	grep -q 'MethodExecutorExecuteStream' $(CPA_UPSTREAM)/sdk/pluginabi/types.go
 	grep -q 'MethodHostHTTPDoStream' $(CPA_UPSTREAM)/sdk/pluginabi/types.go

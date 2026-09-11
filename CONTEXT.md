@@ -77,6 +77,21 @@ assigned.
 The fraction of a provider's usage records that carried token counts. Low coverage forces
 the uniform basis so degradation is visible rather than silent.
 
+### Model metadata
+
+**Discovery**:
+The live `GET {base_url}/models` call that decides *which* OpenCode Go models exist.
+The sole authority on the model list (ADR-0002).
+
+**Metadata overlay**:
+Per-model capability data read from models.dev and layered onto discovered models.
+Annotates IDs discovery already returned; never adds or removes one (ADR-0007).
+_Avoid_: model registry (CPA uses that name for its own in-process `registry` package)
+
+**Reasoning level**:
+One named effort a model accepts (`low`, `high`, `max`, ...), taken from the registry's
+`reasoning_options`. Absent levels mean "not steerable", never "assume low/medium/high".
+
 ### Projection
 
 **Projection**:

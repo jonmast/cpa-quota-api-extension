@@ -11,7 +11,7 @@ import (
 
 const (
 	pluginID      = "cpa-opencode-go-auth"
-	pluginVersion = "0.2.0"
+	pluginVersion = "0.3.0"
 
 	// authType is the value of the "type" field in auths/opencode-go.json.
 	// The host derives AuthParseRequest.Provider from it and routes the parse
@@ -66,13 +66,18 @@ const (
 // authPluginConfig holds the plugin's configuration. Models is empty unless an
 // operator pins an explicit list; the normal path discovers models from the
 // provider at runtime. See docs/adr/0002.
+//
+// MetadataURL points at the registry the models' reasoning levels are read from
+// and is empty only when an operator has turned the overlay off. See
+// docs/adr/0007.
 type authPluginConfig struct {
-	BaseURL string
-	Models  []string
+	BaseURL     string
+	Models      []string
+	MetadataURL string
 }
 
 func defaultAuthPluginConfig() authPluginConfig {
-	return authPluginConfig{BaseURL: defaultBaseURL}
+	return authPluginConfig{BaseURL: defaultBaseURL, MetadataURL: modelsDevURL}
 }
 
 var (
@@ -105,6 +110,7 @@ func pluginRegistration() registration {
 			ConfigFields: []configField{
 				{Name: "base-url", Type: "string", Description: "OpenAI-compatible base URL for OpenCode Go. Default: " + defaultBaseURL + "."},
 				{Name: "models", Type: "string", Description: "Optional comma-separated model IDs to pin for the opencode-go provider key. Leave unset to discover models from the provider's /models endpoint."},
+				{Name: "model-metadata-url", Type: "string", Description: "Registry supplying per-model reasoning levels, since oc-go's /models endpoint carries none. Default: " + modelsDevURL + ". Set to \"" + metadataDisabledValue + "\" to register models without thinking metadata."},
 			},
 		},
 		Capabilities: registrationCapabilities{
@@ -165,7 +171,12 @@ func buildModelResponse(ids []string) modelRegistrationResponse {
 			DisplayName:                id,
 			Name:                       id,
 			SupportedGenerationMethods: []string{"chat"},
-			UserDefined:                true,
+			// nil here is what the plugin used to send unconditionally, and it
+			// is why reasoning levels disappeared when the openai-compatibility
+			// config entry was removed: the host has no default of its own for
+			// plugin-declared models. See docs/adr/0007.
+			Thinking:    metadataStore.thinkingFor(id),
+			UserDefined: true,
 		})
 	}
 	return modelRegistrationResponse{Provider: providerKey, Models: models}
@@ -175,6 +186,12 @@ func buildModelResponse(ids []string) modelRegistrationResponse {
 // the credential. It fetches the live model list from the provider.
 func modelsForAuth(req authModelRequest) (modelResponse, error) {
 	cfg := currentConfig()
+
+	// Refreshed before either branch builds a response, so a pinned model list
+	// carries reasoning levels too. Best-effort by design: a metadata failure
+	// must not cost us the model list. See docs/adr/0007.
+	refreshModelMetadata(activeHost, cfg.MetadataURL, req.HostCallbackID)
+
 	if len(cfg.Models) > 0 {
 		registered := buildModelResponse(cfg.Models)
 		return modelResponse{Provider: registered.Provider, Models: registered.Models}, nil
@@ -427,6 +444,17 @@ func decodeLifecycleConfig(raw []byte) (authPluginConfig, error) {
 			return cfg, fmt.Errorf("models must list at least one model ID")
 		}
 		cfg.Models = models
+	}
+	if value := values["model-metadata-url"]; value != "" {
+		if strings.EqualFold(value, metadataDisabledValue) {
+			cfg.MetadataURL = ""
+		} else {
+			parsed, parseErr := url.Parse(value)
+			if parseErr != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+				return cfg, fmt.Errorf("model-metadata-url must be an http or https URL, or %q", metadataDisabledValue)
+			}
+			cfg.MetadataURL = value
+		}
 	}
 	return cfg, nil
 }

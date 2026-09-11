@@ -563,6 +563,17 @@ key, and unregisters an auth that has no registered models. Override the model
 list with the `models` config field (comma separated) if OpenCode Go's catalog
 changes.
 
+Per-model reasoning levels come from [models.dev](https://models.dev), OpenCode's
+own model registry, because oc-go's `/models` endpoint carries no capability
+metadata. The plugin reads the `opencode-go` provider entry there and maps each
+model's `reasoning_options` onto CPA's `ThinkingSupport`, so both `gpt-5.6-luna`
+and `opencode-go/gpt-5.6-luna` advertise the same efforts. A model the registry
+does not describe registers with no thinking metadata rather than with a
+fabricated default. The fetch is best-effort and ETag-revalidated: losing it
+costs the levels, never the model list. Point `model-metadata-url` elsewhere to
+use a mirror, or set it to `off` on installs with no route to models.dev. See
+[ADR-0007](docs/adr/0007-reasoning-levels-from-the-models-dev-registry.md).
+
 The plugin executes chat completions itself rather than delegating to the
 built-in OpenAI-compatibility executor, because oc-go requires the client's
 `x-opencode-session` header and the built-in executor forwards no client request
