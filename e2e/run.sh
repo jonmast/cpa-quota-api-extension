@@ -135,6 +135,28 @@ status_d=$(call ses_e2e_d true);  echo "D oc-go stream+header  http=$status_d"
 status_e=$(call ses_e2e_e false "$PREFIXED_MODEL")
 echo "E prefixed model       http=$status_e"
 
+# F: reasoning levels reach a client. /v1/models?client_version=<v> is the Codex
+# catalog route (sdk/api/handlers/openai/openai_handlers.go:62), the one that
+# renders ThinkingSupport.Levels as supported_reasoning_levels. Asserting here
+# rather than on the plugin's own output is the point: it proves the levels
+# survive plugin -> host -> registry -> client, which unit tests cannot show.
+curl -sS -o "$WORK/codex-models.json" \
+  "http://$PROXY_HOST:$PROXY_PORT/v1/models?client_version=0.153.3" \
+  -H "Authorization: Bearer $CLIENT_KEY"
+# A missing model reports MODEL-ABSENT rather than an empty string, so "the
+# model never registered" cannot be confused with "it registered with no levels".
+efforts() {
+  nixgo jq -r --arg slug "$1" '
+    (.models // []) | map(select(.slug == $slug)) as $found
+    | if ($found | length) == 0 then "MODEL-ABSENT"
+      else ($found[0].supported_reasoning_levels // [] | map(.effort) | join(","))
+      end
+  ' "$WORK/codex-models.json" 2>/dev/null || echo PARSE-FAILED
+}
+levels_bare=$(efforts "$MODEL")
+levels_prefixed=$(efforts "$PREFIXED_MODEL")
+echo "F reasoning levels     bare=$levels_bare prefixed=$levels_prefixed"
+
 echo
 echo "== what the stub actually received =="
 grep chat/completions "$REQUEST_LOG" || echo "(no chat/completions requests reached the stub)"
@@ -156,6 +178,12 @@ expect "B status" "$status_b" 400
 expect "C status" "$status_c" 200
 expect "D status" "$status_d" 200
 expect "E status" "$status_e" 200
+# The stub advertises low,medium,high,max. Both the bare name and the prefixed
+# alias must report it: the alias is a shallow copy of the same ModelInfo
+# (sdk/cliproxy/service_models.go:611), and it losing the levels while the bare
+# name kept them is the exact regression this checks for.
+expect "F bare levels" "$levels_bare" "low,medium,high,max"
+expect "F prefixed levels" "$levels_prefixed" "low,medium,high,max"
 
 proxied=$(grep -c 'chat/completions' "$REQUEST_LOG" || true)
 ours=$(grep -c 'ua=cpa-opencode-go-auth/' "$REQUEST_LOG" || true)

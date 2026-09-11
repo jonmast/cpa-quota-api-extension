@@ -29,6 +29,17 @@ const sessionHeader = "x-opencode-session"
 // modelID is served by /models and is what the plugin discovers and registers.
 const modelID = "mimo-v2.5"
 
+// metadataETag is returned by the models.dev stand-in so the harness can prove
+// the plugin revalidates rather than re-downloading a multi-megabyte payload.
+const metadataETag = `"stub-metadata-v1"`
+
+// metadataLevels are the reasoning efforts the registry stand-in advertises.
+// Deliberately not low/medium/high: that was the blanket default the removed
+// openai-compatibility config entry applied to every model, so seeing exactly
+// these four values downstream proves they came from the registry rather than
+// from a default that happens to look plausible.
+var metadataLevels = []any{"low", "medium", "high", "max"}
+
 type recorder struct {
 	mu   sync.Mutex
 	file *os.File
@@ -84,6 +95,33 @@ func main() {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"object": "list",
 			"data":   []any{map[string]any{"id": modelID, "object": "model", "owned_by": "opencode-go"}},
+		})
+	})
+	// Stands in for models.dev, the registry the plugin reads reasoning levels
+	// from. Serving it here keeps the harness hermetic -- it must not depend on
+	// a live models.dev -- while still exercising the real overlay code path.
+	// The ETag is served so a second fetch revalidates rather than re-downloads.
+	mux.HandleFunc("/models-dev", func(w http.ResponseWriter, r *http.Request) {
+		rec.record(r, "")
+		if strings.Contains(r.Header.Get("If-None-Match"), metadataETag) {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		w.Header().Set("Etag", metadataETag)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"opencode-go": map[string]any{
+				"id":  "opencode-go",
+				"api": "http://stub.invalid/v1",
+				"models": map[string]any{
+					modelID: map[string]any{
+						"id":        modelID,
+						"reasoning": true,
+						"reasoning_options": []any{
+							map[string]any{"type": "effort", "values": metadataLevels},
+						},
+					},
+				},
+			},
 		})
 	})
 	mux.HandleFunc("/v1/chat/completions", func(w http.ResponseWriter, r *http.Request) {

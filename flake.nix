@@ -40,6 +40,7 @@
             pkgs.go-tools # staticcheck
             pkgs.delve
             pkgs.sqlite # inspecting capture/health .db files by hand
+            pkgs.jq # asserting on JSON responses in the e2e harness
             pkgs.gh
           ];
 
@@ -48,7 +49,10 @@
           };
 
           shellHook = ''
-            echo "$(go version) · cgo enabled · make {fmt,test,build}"
+            # stderr, not stdout: `nix develop --command` runs this banner even
+            # for non-interactive use, and the e2e harness captures the stdout
+            # of commands run through the shell.
+            echo "$(go version) · cgo enabled · make {fmt,test,build}" >&2
           '';
         };
 

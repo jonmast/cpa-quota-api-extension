@@ -21,3 +21,8 @@ plugins:
   configs:
     cpa-opencode-go-auth:
       enabled: true
+      # Point the reasoning-level overlay at the stub rather than the real
+      # models.dev. The harness is meant to run with no external dependency at
+      # all, and a live fetch here would make case F assert on whatever the
+      # registry says about real models today.
+      model-metadata-url: "http://127.0.0.1:9998/models-dev"
